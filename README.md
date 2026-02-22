@@ -26,6 +26,18 @@ node dst/parser.js
 ```
 
 - The parsed chart data will be saved as JSON files in the `track_data/` directory.
+- Right now, the data for each song looks like this:
+
+```
+[
+  {
+    "timeMs": 783, // when the note occurs
+    "type": "don" // note type
+  },
+  ...
+]
+```
+
 - Each `.tja` file should be in its own subdirectory under `tracks/`.
 - The script looks for exactly one `.tja` file per subdirectory.
 
