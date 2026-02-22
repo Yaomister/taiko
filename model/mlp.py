@@ -30,7 +30,7 @@ class MLP(nn.Module):
 
         return x
 
-    # one backpropagation step
+    # one simple backpropagation step
     def backprop(self, x, labels, optimizer, criterion):
         # forward pass
         outputs = self.forward(x)

@@ -44,7 +44,7 @@ class CNN(nn.Module):
 
         return x
 
-    # one backprop step
+    # one simple backprop step
     def backprop(self, x, labels, optimizer, criterion):
         # forward pass
         outputs = self.forward(x)
