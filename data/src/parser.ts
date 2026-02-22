@@ -61,6 +61,7 @@ for (const folder of folders) {
     console.log(
       `Could not find course with desired difficulty in ${tracksDir}/${folder}`,
     );
+    continue;
   }
   parsed += 1;
 }
