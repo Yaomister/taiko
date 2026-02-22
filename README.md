@@ -20,7 +20,9 @@ Various song sources can be found at [TJA Portal](https://tjaportal.neocities.or
 Assuming you have your input `.tja` files in the `tracks/` directory:
 
 ```bash
-node data/dist/parser.js
+cd data
+tsc
+node dst/parser.js
 ```
 
 - The parsed chart data will be saved as JSON files in the `track_data/` directory.
