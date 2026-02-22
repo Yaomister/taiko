@@ -1,10 +1,14 @@
 import { Course, Difficulty, Song, TJAParser } from "tja";
 import fs from "fs";
+import path from "path";
 import { getCourseNoteTimes } from "./courseNotes.js";
+import { fileURLToPath } from "url";
 
 // Constants
-const tracksDir = "../tracks";
-const outDir = "../track_data";
+const filename = fileURLToPath(import.meta.url);
+const dirname = path.dirname(filename);
+const tracksDir = path.resolve(dirname, "../tracks");
+const outDir = path.resolve(dirname, "../track_data");
 const courseDiff = [Difficulty.Normal, Difficulty.Easy];
 
 // Helpers
@@ -28,6 +32,7 @@ const folders = fs
   .map((dirent) => dirent.name);
 
 // Find .tja files and parse them
+let parsed = 0;
 for (const folder of folders) {
   const folderPath = `${tracksDir}/${folder}`;
   const files = fs.readdirSync(folderPath);
@@ -57,4 +62,7 @@ for (const folder of folders) {
       `Could not find course with desired difficulty in ${tracksDir}/${folder}`,
     );
   }
+  parsed += 1;
 }
+
+console.log(`Successfully parsed ${parsed} chart(s).`);
