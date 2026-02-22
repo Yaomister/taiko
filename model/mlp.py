@@ -67,7 +67,7 @@ class MLP(nn.Module):
         outputs = self.forward(x)
         loss = criterion(outputs, labels)
 
-        # backprop
+        # backprop step
         optimizer.zero_grad()
         loss.backward()
 
