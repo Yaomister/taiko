@@ -1,0 +1,7 @@
+Title:       Chaoz Fantasy
+Artist(s):   ParagonX9Charter(s):  ugyuu
+Difficulty:  4/5/5/7/8
+Genre:       バラエティ (Variety)
+BPM:         162.351
+TJADB ID:    10120
+Last Update: 2021-01-23
