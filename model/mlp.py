@@ -30,3 +30,17 @@ class MLP(nn.Module):
 
         return x
 
+    # one backpropagation step
+    def backprop(self, x, labels, optimizer, criterion):
+        # forward pass
+        outputs = self.forward(x)
+        loss = criterion(outputs, labels)
+
+        # backprop
+        optimizer.zero_grad()
+        loss.backward()
+
+        # update weights
+        optimizer.step()
+
+        return loss.item(), outputs
