@@ -48,6 +48,17 @@ class MLP(nn.Module):
         x = self.fc3(x)
 
         return x
+    
+    # prediciton function that applies softmax/normalizes the values in the forward pass
+    def predict(self, x):
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(x)
+            probs = torch.softmax(logits, dim=1)
+            preds = probs.argmax(dim=1)
+        self.train()
+        return probs, preds
+    
 
     # one simple backpropagation step
     def backprop(self, x, labels, optimizer, criterion):
@@ -67,7 +78,7 @@ class MLP(nn.Module):
         outputs = self.forward(x)
         loss = criterion(outputs, labels)
 
-        # backprop
+        # backprop step
         optimizer.zero_grad()
         loss.backward()
 

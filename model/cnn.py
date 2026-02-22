@@ -61,6 +61,16 @@ class CNN(nn.Module):
 
         return x
 
+    # prediciton function that applies softmax/normalizes the values in the forward pass
+    def predict(self, x):
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(x)
+            probs = torch.softmax(logits, dim=1)
+            preds = probs.argmax(dim=1)
+        self.train()
+        return probs, preds
+    
     # one simple backprop step
     def backprop(self, x, labels, optimizer, criterion):
         """
