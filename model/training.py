@@ -177,16 +177,40 @@ class TrainingDataset(Dataset):
 
 
 
+def train(
+        track_dir: str,
+        json_dir: str,
+        epochs: int = 10,
+        batch_size: int = 64,
+        lr: float = 1e-3,
+        device: str = "cude" if  torch.cuda.is_available() else "cpu"
+
+):
+    spectrogram_parameters = SpectrogramParameters()
+    ds = TrainingDataset(track_dir=track_dir, json_dir=json_dir, spectrogram_parameters=spectrogram_parameters, examples_per_song=4000, hit_fraction=0.5)
+    loader = DataLoader(dataset=ds, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+    model = CNN(in_degree=1, out_degree=8).to(device=device)
+    optimizer = torch.optim.Adam(model.parameters(), lr = lr)
+    criterion = nn.CrossEntropyLoss()
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        running_loss = 0.0
+        correct = 0
+        total = 0
+
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+
+            loss, logits = model.backprop(x, y, optimizer=optimizer, criterion=criterion)
+            running_loss += x.size(0) *  loss
 
 
+            preds = logits.arg_max(dim = 1)
+            correct += (preds == y).sum().item()
+            total += y.numel()
 
+            print(f"epoch {epoch}, loss {running_loss/total:.4f}, acc {correct/total:.4f}, samples {total}")
 
-
-
-
-
-def train(audio_files_dir: str, json_files_dir: str, epochs: int = 10, batch_size: int = 64, learning_rate = 1e-3, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
-    parameters = SpectrogramParameters()
-
-    model = CNN().to(device)
-
+    return model
