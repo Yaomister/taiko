@@ -15,7 +15,8 @@ class CNN(nn.Module):
         in_degree: number of input channels (1 for grayscale spectrogram).
         out_degree: number of output classes.
     """
-    def __init__(self, in_degree = 1, out_degree = 3):
+    def __init__(self, in_degree = 1, out_degree = 8):
+        # gonna assume 8 notes, so out degree of 8
         # assuming 80 by 64 spectrogram
         super(CNN, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=in_degree, out_channels=32, kernel_size=(5, 5), padding=2)
