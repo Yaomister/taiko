@@ -26,7 +26,7 @@ class SpectrogramParameters:
 def load_audio_file(dir: str) -> str:
     extensions = ["wav", "mp3", "ogg", "flac", "m4a"]
     for e in extensions:
-        hits = glob.glob(os.path.join(dir), f"*.{e}")
+        hits = glob.glob(os.path.join(dir, f"*.{e}"))
         if hits:
             return hits[0]
     raise FileNotFoundError(f"No audio file found in {dir}")
@@ -96,8 +96,8 @@ class TrainingDataset(Dataset):
             os.path.join(self.tracks_dir, d) for d in os.listdir(self.tracks_dir) if os.path.isdir(os.path.join(self.tracks_dir, d))
         ]
 
-        self.songs = List[Tuple[torch.Tensor, torch.Tensor]] = []
-        self.song_names = List[str]
+        self.songs: List[Tuple[torch.Tensor, torch.Tensor]] = []
+        self.song_names : List[str] = []
 
         ms_per_frame = calculate_ms_per_frame(self.p.sr, self.p.hop_length)
 
@@ -183,11 +183,11 @@ def train(
         epochs: int = 10,
         batch_size: int = 64,
         lr: float = 1e-3,
-        device: str = "cude" if  torch.cuda.is_available() else "cpu"
+        device: str = "cuda" if  torch.cuda.is_available() else "cpu"
 
 ):
     spectrogram_parameters = SpectrogramParameters()
-    ds = TrainingDataset(track_dir=track_dir, json_dir=json_dir, spectrogram_parameters=spectrogram_parameters, examples_per_song=4000, hit_fraction=0.5)
+    ds = TrainingDataset(audio_file_dir=track_dir, json_dir=json_dir, spectrogram_parameters=spectrogram_parameters, examples_per_song=4000, hit_fraction=0.5)
     loader = DataLoader(dataset=ds, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
     model = CNN(in_degree=1, out_degree=8).to(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr = lr)
@@ -207,10 +207,23 @@ def train(
             running_loss += x.size(0) *  loss
 
 
-            preds = logits.arg_max(dim = 1)
+            preds = logits.argmax(dim = 1)
             correct += (preds == y).sum().item()
             total += y.numel()
 
             print(f"epoch {epoch}, loss {running_loss/total:.4f}, acc {correct/total:.4f}, samples {total}")
 
     return model
+
+
+def main():
+    model = train(
+        track_dir="data/tracks",
+        json_dir="data/track_data",
+        epochs=10
+    )
+
+    torch.save(model.state_dict(), "model.pth")
+
+if __name__ == "__main__":
+    main()
