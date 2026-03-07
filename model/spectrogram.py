@@ -1,25 +1,14 @@
 import torch
 import torchaudio
 
+from config import DEFAULT_SAMPLE_RATE
 
-# Standard CD sample rate
-DEFAULT_SAMPLE_RATE = 44100 
 
 # sample rate = how many sampels exists per second
 # n_ftt = how many audio samples you look at at once to analyze frequencies (window length)
 # hop_length = how far you move each time you analyze (how far the window moves)
 # n_mels = how many rows the spectrogram have 
 
-
-def load_audio(path: str, target_sr: int = DEFAULT_SAMPLE_RATE):
-    """Returns waveform (1, N) at the sample rate"""
-    wav, sr = torchaudio.load(path)
-    if wav.size(0) > 1:
-        # make sure its mono channel and keep dimensions
-        wav = wav.mean(dim=0, keepdim=True)
-    if sr != target_sr:
-        wav = torchaudio.functional.resample(wav, sr, target_sr)
-    return wav
 
 
 class LogMelSpectrogram(torch.nn.Module):
@@ -54,8 +43,9 @@ class LogMelSpectrogram(torch.nn.Module):
         m_db = self.db(m)
         return m_db.squeeze(0)
     
-def calculate_ms_per_frame(sr: int, hop_length: int) -> float:
-    return (hop_length / sr) * 1000.0
+
+
+
 
 
 
