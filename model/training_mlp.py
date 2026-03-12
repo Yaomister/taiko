@@ -21,7 +21,7 @@ def train(
     spectrogram_parameters = SpectrogramParameters()
     ds = TrainingDataset(audio_file_dir=track_dir, json_dir=json_dir, spectrogram_parameters=spectrogram_parameters, examples_per_song=4000, hit_fraction=0.5)
     loader = DataLoader(dataset=ds, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
-    model = MLP(in_features=5120, out_degree=3).to(device=device)
+    model = MLP(in_features=5120, out_degree=8).to(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
 
