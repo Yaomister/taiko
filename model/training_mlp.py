@@ -50,8 +50,8 @@ def train(
 
 def main():
     model = train(
-        track_dir="data/tracks",
-        json_dir="data/track_data",
+        track_dir="../data/tracks",
+        json_dir="../data/track_data",
         epochs=10
     )
 

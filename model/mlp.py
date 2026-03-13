@@ -13,7 +13,7 @@ class MLP(nn.Module):
         n_head: number of attention heads.
         dropout: dropout probability.
     """
-    def __init__(self, in_features = 5120, out_degree = 3, d_model = 128, n_head = 4, dropout = 0.1):
+    def __init__(self, in_features = 5120, out_degree = 8, d_model = 128, n_head = 4, dropout = 0.1):
         super(MLP, self).__init__()
 
         self.projection = nn.Linear(in_features, d_model)
