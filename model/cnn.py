@@ -1,23 +1,17 @@
-
-
 import torch
-
 import torch.nn as nn
 import torch.nn.functional as functional
 
-
 class CNN(nn.Module):
     """
-    CNN for spectrogram spectrogram classification.
-    3 convolutional blocks followed by 2 dense layers
+    CNN for taiko beat classification
+    3 convolutional blocks followed by 2 fully connexcted layers
 
     Args:
-        in_degree: number of input channels (1 for grayscale spectrogram).
-        out_degree: number of output classes.
+        in_degree: number of input channels (1 for grayscale spectrogram)
+        out_degree: number of output classes (8 for note types)
     """
     def __init__(self, in_degree = 1, out_degree = 8):
-        # gonna assume 8 notes, so out degree of 8
-        # assuming 80 by 64 spectrogram
         super(CNN, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=in_degree, out_channels=32, kernel_size=(5, 5), padding=2)
         self.pool1 = nn.MaxPool2d(2, 2)
@@ -28,19 +22,19 @@ class CNN(nn.Module):
         self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(5, 5), padding=2)
         self.pool3 = nn.MaxPool2d(2, 2)
 
-        self.fc1 = nn.Linear(in_features= 128 * 10 * 8, out_features=50)
-        self.fc2 = nn.Linear(in_features=50, out_features=out_degree)
+        self.fc1 = nn.Linear(in_features= 128 * 10 * 8, out_features=128)
+        self.fc2 = nn.Linear(in_features=128, out_features=out_degree)
 
 
     def forward(self, x):
         """
-        forward pass with relu activation functions + pooling
+        Forward pass with relu activation functions and pooling
 
         Args:
-            x: the input of the dimensions: batch, in_degree, 80, 64
+            x: the input of the dimensions: batch_size, in_degree, 80, 64
         
-        returns:
-            unnormalized prediction values with the dimensions of: batch, out_degree
+        Returns:
+            unnormalized prediction values with the dimensions of: batch_size, out_degree
         """
         x = self.conv1(x)
         x = functional.relu(x)
@@ -54,6 +48,7 @@ class CNN(nn.Module):
         x = functional.relu(x)
         x = self.pool3(x)
 
+        # view(-1, ...) figures out the dimension itself
         x = x.view(-1, 128 * 10 * 8)
         x = self.fc1(x)
         x = functional.relu(x)
@@ -62,38 +57,48 @@ class CNN(nn.Module):
 
         return x
 
-    # prediciton function that applies softmax/normalizes the values in the forward pass
     def predict(self, x):
+        """
+        Prediction and normalizes the values (with softmax) in the forward pass
+        
+        Args:
+            x: input tensor of shape (batch_size, 1, 80, 64)
+
+        Returns:
+            probs: probability distribution over the note types
+            preds: predicted note for each sample
+        """
+        # Runs inference and applies softmax/normalizes the values in the forward pass
         self.eval()
         with torch.no_grad():
             logits = self.forward(x)
             probs = torch.softmax(logits, dim=1)
             preds = probs.argmax(dim=1)
-        self.train()
         return probs, preds
     
-    # one simple backprop step
+
     def backprop(self, x, labels, optimizer, criterion):
         """
-        calculates loss function then updates weights with given optimizer
+        Performs a single training step: forward pass, loss calculation, and weight update via backpropagation
 
         Args:
-            x: input tensor (batch, 1, 80, 64)
-            labels: ground truth class indices (batch)
-            optimizer: torch.optim optimizer (e.g. Adam)
-            criterion: loss function
+            x: input tensor (batch_size, 1, 80, 64)
+            labels: ground truth note types
+            optimizer: the optimizer
+            criterion: the loss function
         
         Returns:
             loss value, predictions
         """
+        optimizer.zero_grad()
+
         # forward pass
         outputs = self.forward(x)
         loss = criterion(outputs, labels)
 
         # backprop
-        optimizer.zero_grad()
         loss.backward()
-
+        
         # update weights
         optimizer.step()
 

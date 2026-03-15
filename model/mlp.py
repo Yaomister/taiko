@@ -4,14 +4,14 @@ import torch.nn.functional as functional
 
 class MLP(nn.Module):
     """
-    Creates MLP with the given parameters 
+    MLP for taiko beat classification
 
     Args:
-        in_features: dimensionality of each input token (default 5120).
-        out_degree: number of output classes.
-        d_model: internal model dimension after projection.
-        n_head: number of attention heads.
-        dropout: dropout probability.
+        in_features: dimensionality of each input token (default 5120)
+        out_degree: number of output classes
+        d_model: internal model dimension after projection
+        n_head: number of attention heads
+        dropout: dropout probability
     """
     def __init__(self, in_features = 5120, out_degree = 8, d_model = 128, n_head = 4, dropout = 0.1):
         super(MLP, self).__init__()
@@ -32,10 +32,10 @@ class MLP(nn.Module):
         Does forward pass with relu activation functions and then returns prediction
 
         Args:
-            x: the input layer with dimensions of: batch, seq_len, in_features
+            x: the input layer with dimensions of: batch_size, seq_len, in_features
         
         Returns:
-            The raw predictions with dimensions of: batch, out_degree
+            The raw predictions with dimensions of: batch_size, out_degree
         """
         x = self.norm(self.projection(x))
         x, _ = self.attention(x, x, x)
@@ -49,26 +49,23 @@ class MLP(nn.Module):
 
         return x
     
-    # prediciton function that applies softmax/normalizes the values in the forward pass
     def predict(self, x):
         self.eval()
         with torch.no_grad():
             logits = self.forward(x)
             probs = torch.softmax(logits, dim=1)
             preds = probs.argmax(dim=1)
-        self.train()
         return probs, preds
     
 
-    # one simple backpropagation step
     def backprop(self, x, labels, optimizer, criterion):
         """
         complete forward + backward + weight update step.
         
         Args:
-            x: input tensor with the shape of (batch, seq_len, in_features)
-            labels: ground truth class indices (batch,)
-            optimizer: torch.optim optimizer (e.g. Adam)
+            x: input tensor with the shape of (batch_size, seq_len, in_features)
+            labels: ground truth class indices (batch_size,)
+            optimizer: torch.optim optimizer
             criterion: loss function (e.g. Cross Entropy Loss)
         
         Returns:
