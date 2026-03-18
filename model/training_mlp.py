@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from spectrogram import LogMelSpectrogram
-from mlp import MLP  # different: MLP instead of CNN
+from mlp import MLP
 
 from dataset import TrainingDataset
 from config import SpectrogramParameters
@@ -42,8 +42,7 @@ def train(
     loader = DataLoader(dataset=ds, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
 
     # MLP with attention: projects the flattened 80x64=5120 spectrogram patch into a
-    # 128-dim token, applies multi-head self-attention, then classifies into 8 note types:
-    # no_hit, don, ka, bigDon, bigKa, drumroll, bigDrumroll, balloon
+    # 128-dim token, applies multi-head self-attention, then classifies into 8 note types
     model = MLP(in_features=5120, out_degree=8).to(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
@@ -74,7 +73,6 @@ def train(
             total += y.numel()
 
             print(f"epoch {epoch}, loss {running_loss/total:.4f}, acc {correct/total:.4f}, samples {total}")
-
     return model
 
 
@@ -85,8 +83,6 @@ def main():
         epochs=10
     )
 
-    # Persist only the learned weights (not optimizer state) so the model can be
-    # reloaded later with MLP(...).load_state_dict(torch.load("model_mlp.pth"))
     torch.save(model.state_dict(), "model_mlp.pth")
 
 if __name__ == "__main__":
