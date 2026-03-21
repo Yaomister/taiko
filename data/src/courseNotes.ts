@@ -10,26 +10,7 @@ import {
   Song,
 } from "tja";
 
-// Use an enum for NoteType instead of union of strings
-export enum NoteType {
-  Don = "don",
-  Ka = "ka",
-  BigDon = "bigDon",
-  BigKa = "bigKa",
-  Drumroll = "drumroll",
-  BigDrumroll = "bigDrumroll",
-  Balloon = "balloon",
-}
-
-export type CourseNote = { timeMs: number; type: NoteType };
-
-// Use an enum for ParseState
-export enum ParseState {
-  Neutral = "neutral",
-  BranchFinding = "branchfinding",
-  EndFinding = "endfinding",
-  NoteParsing = "noteparsing",
-}
+import { CourseNote, NoteType, ParseState } from "./noteData.js";
 
 type HeldState =
   | { type: NoteType.Drumroll; startTime: number; isBig: boolean }
@@ -150,7 +131,7 @@ function handleMeasureContext(context: HandlerContext, cmd: MeasureCommand) {
 
 function handlePlayableNoteContext(context: HandlerContext, note: Note) {
   if (note.isDon || note.isKa || note.isBigDon || note.isBigKa) {
-    context.notes.push({ timeMs: context.time, type: noteType(note)! });
+    context.notes.push({ time_ms: context.time, type: noteType(note)! });
     return;
   }
   if (note.isBalloon) {
@@ -176,14 +157,14 @@ function handlePlayableNoteContext(context: HandlerContext, note: Note) {
   if (note.isEndOfDrumroll && context.heldState) {
     if (context.heldState.type === NoteType.Drumroll) {
       context.notes.push({
-        timeMs: context.heldState.startTime,
+        time_ms: context.heldState.startTime,
         type: context.heldState.isBig
           ? NoteType.BigDrumroll
           : NoteType.Drumroll,
       });
     } else {
       context.notes.push({
-        timeMs: context.heldState.startTime,
+        time_ms: context.heldState.startTime,
         type: NoteType.Balloon,
       });
     }
