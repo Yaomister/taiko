@@ -3,6 +3,7 @@ import fs, { mkdirSync } from "fs";
 import path from "path";
 import { getCourseNoteTimes } from "./courseNotes.js";
 import { fileURLToPath } from "url";
+import { validateArgs } from "./labelUtils.js";
 
 /**
  * Parses and creates JSON files containing timestamp labels for notes in
@@ -21,20 +22,7 @@ import { fileURLToPath } from "url";
  */
 
 // Args
-const args: string[] = process.argv.slice(2);
-if (args.length != 1) {
-  throw Error(
-    "Expected 1 argument: course difficulty (easy, normal, hard, etc.)",
-  );
-}
-
-const diffArg = args[0];
-const courseDiff = Difficulty.fromName(diffArg, true);
-if (courseDiff === undefined) {
-  throw Error(
-    `Could not find difficulty '${diffArg}'. Refer to https://jozsefsallai.github.io/tja-js/classes/Difficulty.html for supported difficulties.`,
-  );
-}
+const courseDiff = validateArgs();
 
 // Constants
 // Should be run from the data folder
