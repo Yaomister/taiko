@@ -3,31 +3,38 @@ Onset detection dataset pipeline for CNN training. Saves batches of a specified 
 to out_path/batch_n.npz, and a metadata file out_path/metadata.json containing information
 about the dataset.
 
-Each training example:
-  - Input: multi-resolution mel spectrogram windows centered at a frame
-    X.shape = (3, 15, 80) — stack of [512, 1024, 2048] FFT mel patches
-  - Output: binary label (1 = onset at center frame, 0 = no onset)
+Tensor shapes: X (3, 15, 80), y scalar {0,1}; batch X (N, 3, 15, 80)
 
-Audio: mono, 44100 Hz. FTT-style frames: hop 512, window sizes [512, 1024, 2048].
+Usage:
+    --out_path data/preprocessed/train_data \\
+    --note_types "Don,Ka" \\
+    --batch_size 50 \\
+    --negative_ratio 1.0 \\
+    --seed 0
 
-Args:
-    audio_dir (str): Root directory containing song folders with audio files.
-    json_dir (str): Directory containing JSON label files (one per song).
-    out_path (str): Path to output .npz file (will be created/overwritten).
-    cfg (OnsetPipelineConfig): Pipeline configuration (sample_rate, hop_size, n_mels, negative_ratio, seed).
-    allowed_types (List[NoteType]): Note types to include in training (e.g., [NoteType.Don, NoteType.Ka]).
-
-Usage (from repo root):
-    python -m data.src.spectrogram \\
-        --audio_dir data/tracks \\
-        --json_dir data/preprocessed/labels \\
-        --out_path data/preprocessed/train_data
-
-Tensor shapes (L = len(audio), hop = 512, W in {512,1024,2048}):
-  - Per resolution: num_frames_W = (L - W) // hop + 1; aligned num_frames = (L - 2048) // hop + 1
-  - mel_spec_W: (num_frames, 80)
-  - labels: (num_frames,) binary, frame i <-> time i * hop / sr sec; onset at t -> frame int(t*sr/hop)
-  - Per sample: X (3, 15, 80), y scalar {0,1}; batch X (N, 3, 15, 80)
+Arguments:
+    --audio_dir (str): Path to directory containing song folders with audio files.
+    Default: "data/tracks"
+    
+    --json_dir (str): Path to directory containing JSON label files (required).
+    Each JSON file should correspond to an audio file with the same base name.
+    
+    --out_path (str): Path to output directory for saving batch files and metadata (required).
+    Creates batch_0.npz, batch_1.npz, ... and metadata.json
+    
+    --note_types (str): Comma-separated list of onset types to include (required).
+    Valid values: Don, Ka, Shaker
+    Example: "Don,Ka"
+    
+    --batch_size (int): Number of songs per batch before saving.
+    Default: 50
+    
+    --negative_ratio (float): Target ratio of negative to positive samples per song.
+    Use -1 to include all negative samples.
+    Default: 1.0
+    
+    --seed (int): Random seed for reproducibility.
+    Default: 0
 """
 
 from __future__ import annotations
@@ -40,7 +47,6 @@ from typing import List, Optional
 from .spectrogram_utils import NOTE_TYPE_TO_ID
 
 import numpy as np
-import json
 from math import ceil
 
 from data.src.spectrogram_utils import (
@@ -156,7 +162,7 @@ def preprocess_dataset(
             batch_X, batch_Y, batch_sample_to_song, batch_song_names = [], [], [], []
 
     # Save metadata
-    dataset_info = {
+    metadata = {
         "sample_rate": SAMPLE_RATE,
         "hop_size": HOP_SIZE,
         "window_sizes": list(WINDOW_SIZES),
@@ -165,12 +171,8 @@ def preprocess_dataset(
         "X_shape": "(N, 3, 15, 80)",
         "y_shape": "(N,) multi-class beat label at center frame (0=background)",
         "classes": {"0": "background", **{str(v): k for k, v in class_ids.items()}},
-    }
-    metadata = {
-        "config": dataset_info,
         "n_samples": n_samples,
         "n_songs": n_songs,
-        "note_type_to_id": class_ids,
     }
     with open(f"{out_path}/metadata.json", "w") as file:
         json.dump(metadata, file)
