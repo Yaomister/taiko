@@ -1,6 +1,6 @@
 # taiko
 
-## Usage`
+## Usage
 
 ### 1. Install dependencies
 
@@ -15,35 +15,23 @@ Make sure you also have Node.js installed.
 
 ### 2. Drag your songs into the `tracks/` directory
 
-Various song sources can be found at [TJA Portal](https://tjaportal.neocities.org/).
+- Various track sets can be found at [TJA Portal](https://tjaportal.neocities.org/).
+- Track folders can be nested, but just make sure that any folder that contains a `.tja` file also has an audio file.
+- Most audio types should be supported. See `data/src/spectrogram_utils.py` for supported audio types.
 
-### 3. Run the parser
+### 3. Run the dataset builder script
 
-Assuming you have your input `.tja` files in the `tracks/` directory:
+Supported flags:
 
+| Flag | Type | Description |
+|------|------|-------------|
+| `-d` | Required | Course difficulty. See [supported difficulties](https://jozsefsallai.github.io/tja-js/classes/Difficulty.html) |
+| `-f` | Required | Output directory name under `<data>/preprocessed/exports/` |
+| `-n` | Required | Note types (comma-separated, e.g. `don,ka`. See `data/src/spectrogram_utils.py` for supported note types.) |
+| `-b` | Optional | Batch size; songs per dataset file (default: `50`) |
+| `-c` | Optional | Clears labels directory for the specified difficulty. |
+
+Example:
 ```bash
-cd data
-tsc
-node dst/parser.js
+./data/src/build_dataset.sh -d easy -f my_dataset -n don,ka -b 50
 ```
-
-- The parsed chart data will be saved as JSON files in the `labels/` directory.
-- Right now, the data for each song looks like this:
-
-```
-[
-  {
-    "time_ms": 783, // when the note occurs
-    "type": "don" // note type
-  },
-  ...
-]
-```
-
-- Each `.tja` file should be in its own subdirectory under `tracks/`.
-- The script looks for exactly one `.tja` file per subdirectory.
-
-### Notes
-
-- If the output JSON for a chart already exists, you'll need to delete it before re-running the parser.
-- Only charts with "Easy" or "Normal" difficulty are processed by default. This can be changed later
