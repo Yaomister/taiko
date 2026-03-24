@@ -29,9 +29,9 @@ import { validateArgs } from "./labelUtils.js";
 const { courseDiff, outputDir: labelsParentDir, tracksDir } = validateArgs();
 const outDir = path.join(labelsParentDir, courseDiff.toString().toLowerCase());
 
-function sanitizeLabelJsonStem(folderName: string): string {
-  return folderName.replace(/[\\/:"*?<>| ]+/g, "_").trim();
-}
+// function sanitizeLabelJsonStem(folderName: string): string {
+//   return folderName.replace(/[\\/:"*?<>| ]+/g, "_").trim();
+// }
 
 // Helpers
 // Parses the chart, then returns whether the chart already exists
@@ -111,7 +111,7 @@ for (const filePath of filePaths) {
 
   if (course) {
     const songFolder = path.dirname(filePath);
-    const jsonStem = sanitizeLabelJsonStem(path.basename(songFolder));
+    const jsonStem = path.basename(songFolder);
     const promise = parseChart(chart, course, jsonStem);
     chartParsedPromises.push(promise);
   } else {

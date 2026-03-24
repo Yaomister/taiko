@@ -17,11 +17,14 @@
 #                       exports/ (basename required via -f).
 #
 # Flags: 
-#   -d: the course difficulty. Supported difficulties documented here: https://jozsefsallai.github.io/tja-js/classes/Difficulty.html
-#   -f: name of the exported dataset file under <data>/preprocessed/exports/.
-#   -n: beat types (comma-separated, e.g. don,ka). Labels JSON still lists every type.
-#   -c (optional): clears labels/<difficulty>/ under preprocessed (or -o labels tree).
-#   -o (optional): parent directory for label JSON; a subdirectory named after the difficulty (lowercased) is created inside it. Default: <data>/preprocessed/labels
+#   Required:
+#     -d: the course difficulty. Supported difficulties documented here: https://jozsefsallai.github.io/tja-js/classes/Difficulty.html
+#     -f: name of the directory the dataset will be exported to under <data>/preprocessed/exports/<name>.
+#     -n: note types (comma-separated, e.g. don,ka).
+#
+#   Optional:
+#     -b: batch size; number of songs per dataset file. Default: 50 
+#     -c: clears labels/<difficulty>/ under preprocessed (or -o labels tree).
 
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,28 +35,29 @@ DATA_SRC="${DATA_DIR}/src"
 LABELLER_PATH="${DATA_DST}/labels.js"
 ARGS_VALIDATOR_PATH="${DATA_DST}/validateArgs.js"
 PREPROCESSED_PATH="${DATA_DIR}/preprocessed"
+LABELS_DIR="$PREPROCESSED_PATH/labels"
 TRACKS_DIR="${DATA_DIR}/tracks"
-LOGS_DIR="${PREPROCESSED_PATH}/logs" # Where script logs go
 
 # Flags
 clear_flag=''
 diff_flag=''
-output_dir_flag=''
-export_file_flag=''
+labels_dir_flag=''
+dataset_dir_flag=''
 note_types=''
+batch_size=''
 
 # Args handling
 print_usage() {
-    printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_basename.npz> -n <note_types> [-o <labels_parent_dir>] [-c]\n" "$DATA_SRC"
+    printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_dir> -n <note_types> [-l <labels_parent_dir>] [-b <batch_size>] [-c]\n" "$DATA_SRC"
 }
 
-while getopts ":d:o:f:n:c" flag; do
+while getopts ":d:f:n:c:b:" flag; do
   case "$flag" in
     c) clear_flag='true' ;;
     d) diff_flag="$OPTARG" ;;
-    o) output_dir_flag="$OPTARG" ;;
-    f) export_file_flag="$OPTARG" ;;
+    f) dataset_dir_flag="$OPTARG" ;;
     n) note_types="$OPTARG" ;;
+    b) batch_size="$OPTARG" ;;
     :)
       echo "Option -$OPTARG requires an argument"
       exit 1 ;;
@@ -63,44 +67,17 @@ while getopts ":d:o:f:n:c" flag; do
   esac
 done
 
-if [[ $diff_flag == '' ]]; then
-    echo "Missing difficulty flag."
+# Required flags
+if [[ -z "$diff_flag" || -z "$dataset_dir_flag" || -z "$note_types" ]]; then
+    echo "Missing required flag(s)."
     print_usage
     exit 1
 fi
 
-if [[ -z "$export_file_flag" ]]; then
-    echo "Missing export filename flag (-f)."
-    print_usage
-    exit 1
-fi
 
-if [[ -z "$note_types" ]]; then
-    echo "Missing note types flag (-n). Example: -n don,ka"
-    print_usage
-    exit 1
-fi
-
-export_basename="$export_file_flag"
-if [[ "$export_basename" == */* ]]; then
-    echo "Export filename (-f) must be a basename only (no /)."
-    exit 1
-fi
-
-if [[ -z "$output_dir_flag" ]]; then
-    labels_output_parent="$PREPROCESSED_PATH/labels"
-else
-    labels_output_parent="$output_dir_flag"
-fi
-if [[ "$labels_output_parent" != /* ]]; then
-    labels_output_parent="$DATA_DIR/$labels_output_parent"
-fi
-
-diff_folder="$(printf '%s' "$diff_flag" | tr '[:upper:]' '[:lower:]')"
-
-export_npz_path="${PREPROCESSED_PATH}/exports/${export_basename}.npz"
-if [[ -f "$export_npz_path" ]]; then
-  echo "File already exists: $export_npz_path"
+export_dir="${PREPROCESSED_PATH}/exports/${dataset_dir_flag}"
+if [[ -d "$export_dir" ]]; then
+  echo "Directory already exists: $export_dir"
   exit 1
 fi
 
@@ -110,15 +87,12 @@ if ! [[ -d "$DATA_DST" || -d "$DATA_SRC" ]]; then
 fi
 
 # Clear existing labels if requested
-existing_labels="${labels_output_parent}/${diff_folder}"
+diff_folder="$(printf '%s' "$diff_flag" | tr '[:upper:]' '[:lower:]')"
+existing_labels="${LABELS_DIR}/${diff_folder}"
 if [[ $clear_flag != '' && -d "$existing_labels" ]]; then
     rm -rf "$existing_labels"
     echo "Cleared existing labels."
 fi
-
-# Create logs directory if it doesn't exist
-mkdir -p "$LOGS_DIR"
-logs_file="$LOGS_DIR/${export_basename}_logs.txt"
 
 # Compile scripts, validate arguments
 if [[ ! -f "$LABELLER_PATH" || ! -f "$ARGS_VALIDATOR_PATH" ]]; then
@@ -126,7 +100,7 @@ if [[ ! -f "$LABELLER_PATH" || ! -f "$ARGS_VALIDATOR_PATH" ]]; then
     tsc -p "$DATA_DIR"
 fi
 
-node "$ARGS_VALIDATOR_PATH" "$diff_flag" "$labels_output_parent" "$TRACKS_DIR"
+node "$ARGS_VALIDATOR_PATH" "$diff_flag" "$LABELS_DIR" "$TRACKS_DIR"
 if [ $? -ne 0 ]; then
     echo "Invalid arguments. See errors above."
     exit 1
@@ -135,7 +109,7 @@ fi
 # Create labels
 echo "Creating labels..." 
 
-node "$LABELLER_PATH" "$diff_flag" "$labels_output_parent" "$TRACKS_DIR" 
+node "$LABELLER_PATH" "$diff_flag" "$LABELS_DIR" "$TRACKS_DIR" 
 if [ $? -ne 0 ]; then
     echo "Label creation failed. See errors above."
     exit 1
@@ -144,19 +118,24 @@ fi
 echo "Label creation complete. Creating dataset..." 
 
 # Run from repo root
-PYTHONPATH="$REPO_ROOT" python -m data.src.spectrogram \
-    --audio_dir "$TRACKS_DIR" \
-    --json_dir "${labels_output_parent}/${diff_folder}" \
-    --out_path "$export_npz_path" \
-    --note_types "$note_types" 
+cmd=(
+  python -m data.src.spectrogram
+  --audio_dir "$TRACKS_DIR"
+  --json_dir "${LABELS_DIR}/${diff_folder}"
+  --out_path "$export_dir"
+  --note_types "$note_types"
+)
+
+if [[ -n "$batch_size" ]]; then # Batch size is optional, may be unspecified
+  cmd+=(--batch_size "$batch_size")
+fi
+
+PYTHONPATH="$REPO_ROOT" "${cmd[@]}"
 
 if [ $? -ne 0 ]; then
     echo "Dataset export failed. See errors above."
     exit 1
 fi
 
-# TODO: add thread pool in spectrogram.py
-# TODO: isntead of printing every single name, just print a progress number and current track
-
-echo "Exported dataset to $export_npz_path."
+echo "Exported dataset to $export_dir."
 exit 0
