@@ -1,12 +1,14 @@
 # taiko
 
-## Usage
+## Usage`
 
 ### 1. Install dependencies
 
 ```bash
 cd data
 npm i
+pip install librosa
+pip install torch
 ```
 
 Make sure you also have Node.js installed.
@@ -25,13 +27,13 @@ tsc
 node dst/parser.js
 ```
 
-- The parsed chart data will be saved as JSON files in the `track_data/` directory.
+- The parsed chart data will be saved as JSON files in the `labels/` directory.
 - Right now, the data for each song looks like this:
 
 ```
 [
   {
-    "timeMs": 783, // when the note occurs
+    "time_ms": 783, // when the note occurs
     "type": "don" // note type
   },
   ...

@@ -2,37 +2,36 @@ import { Course, Difficulty, Song, TJAParser } from "tja";
 import fs, { mkdirSync } from "fs";
 import path from "path";
 import { getCourseNoteTimes } from "./courseNotes.js";
-import { fileURLToPath } from "url";
 import { validateArgs } from "./labelUtils.js";
 
 /**
- * Parses and creates JSON files containing timestamp labels for notes in
- * each track.
+ * Parses and creates JSON files containing timestamp and type labels for all notes in each track.
+ * The script searches the tracks directory recursively, but the track folders must have a .tja
+ * file and an audio track.
  *
- * Usage: node labels.js <course difficulty>
+ * Labels go in <output directory>/<difficulty>/. Each JSON file is named
+ *  after the parent folder of the .tja (sanitized for the filesystem),  e.g. .../Chaoz Fantasy/chart.tja -> Chaoz_Fantasy.json.
+ *
+ * Usage: node labels.js <course difficulty> <output directory> [tracks directory]
  * Supported difficulties are documented here: https://jozsefsallai.github.io/tja-js/classes/Difficulty.html
  *
- * Relative to the script's location; this expects the tracks to be in ../tracks, and
- * places the labels in ../preprocessed/labels/<difficulty>. Label files have the following title naming:
- * Song_Name_Difficulty.json (e.g. Chaoz_Fantasy_Hard.json). Note that if the script finds a song
- * that has been parsed for the same difficulty in the labels folder, it will skip parsing it.
+ * Behaviour:
+ * - If tracks directory is omitted, it defaults to ../tracks next to the compiled script (<data>/tracks).
  *
- * If ../preprocessed/labels doesn't exist, the script will create the folder recursively. If
- * ../tracks doesn't exist, an error will be thrown.
+ *
+ * - If the script finds a song that has been parsed for the same difficulty in the labels folder, it will skip parsing it.
+ *
+ * - If <output directory>/<difficulty> doesn't exist, the script will create it recursively. If
+ *   the tracks directory doesn't exist, an error will be thrown.
  */
 
 // Args
-const courseDiff = validateArgs();
+const { courseDiff, outputDir: labelsParentDir, tracksDir } = validateArgs();
+const outDir = path.join(labelsParentDir, courseDiff.toString().toLowerCase());
 
-// Constants
-// Should be run from the data folder
-const filename = fileURLToPath(import.meta.url);
-const dirname = path.dirname(filename);
-const tracksDir = path.resolve(dirname, "../tracks");
-const outDir = path.resolve(
-  dirname,
-  `../preprocessed/labels/${courseDiff.toString().toLowerCase()}`,
-);
+function sanitizeLabelJsonStem(folderName: string): string {
+  return folderName.replace(/[\\/:"*?<>| ]+/g, "_").trim();
+}
 
 // Helpers
 // Parses the chart, then returns whether the chart already exists
@@ -41,12 +40,15 @@ type ParseChartResult = {
   alreadyExists: boolean; // If the chart already existed when the script ran
 };
 
-const parseChart = (chart: Song, course: Course): Promise<ParseChartResult> => {
-  let title = chart.title.replace(/[\\/:"*?<>| ]+/g, "_").trim();
-  const outPath = `${outDir}/${title}_${courseDiff?.toString()}.json`;
+const parseChart = (
+  chart: Song,
+  course: Course,
+  jsonStem: string,
+): Promise<ParseChartResult> => {
+  const outPath = `${outDir}/${jsonStem}.json`;
   if (fs.existsSync(outPath)) {
     return new Promise((resolve, reject) => {
-      resolve({ chartName: title, alreadyExists: true });
+      resolve({ chartName: jsonStem, alreadyExists: true });
     });
   }
   const notes = getCourseNoteTimes(chart, course);
@@ -56,7 +58,7 @@ const parseChart = (chart: Song, course: Course): Promise<ParseChartResult> => {
       if (err) {
         reject("Failed to write to file");
       }
-      resolve({ chartName: title, alreadyExists: false });
+      resolve({ chartName: jsonStem, alreadyExists: false });
     });
   });
 };
@@ -68,36 +70,39 @@ if (!fs.existsSync(tracksDir)) {
   );
 }
 if (!fs.existsSync(outDir)) {
-  console.log(`Creating output directory ${outDir}.`);
   mkdirSync(outDir, { recursive: true });
 } else {
   console.log(`Found output directory ${outDir}.`);
 }
 
-const songFolders = fs
-  .readdirSync(tracksDir, { withFileTypes: true })
-  .filter((dirent) => dirent.isDirectory())
-  .map((dirent) => dirent.name);
+// Recursively find all TJA paths
+function getAllTJAPaths(dir: string): string[] {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  return entries.flatMap((entry) => {
+    const fullPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      return getAllTJAPaths(fullPath);
+    } else if (entry.isFile() && entry.name.endsWith(".tja")) {
+      return [fullPath];
+    }
+
+    return [];
+  });
+}
+
+const filePaths: string[] = getAllTJAPaths(tracksDir);
 
 // Find .tja files and parse them
 let chartParsedPromises: Promise<ParseChartResult>[] = [];
-for (const songFolder of songFolders) {
-  const folderPath = `${tracksDir}/${songFolder}`;
-  const files = fs.readdirSync(folderPath);
-  const tjaFiles = files.filter((file) => file.endsWith(".tja"));
-
-  if (tjaFiles.length !== 1) {
-    console.log(`No .tja files/more than 1 .tja file found: ${songFolder}`);
-    continue;
-  }
-
-  const tjaFilePath = `${folderPath}/${tjaFiles[0]}`;
-  const tjaContent = fs.readFileSync(tjaFilePath, "utf-8");
+for (const filePath of filePaths) {
+  const tjaContent = fs.readFileSync(filePath, "utf-8");
   let chart: Song;
   try {
     chart = TJAParser.parse(tjaContent, true);
   } catch (err) {
-    console.log(`Failed to parse ${tjaFilePath}: ${err}`);
+    console.log(`Failed to parse ${filePath}: ${err}`);
     continue;
   }
 
@@ -105,12 +110,12 @@ for (const songFolder of songFolders) {
   const course = chart.courses.find((c) => courseDiff === c.difficulty);
 
   if (course) {
-    const promise = parseChart(chart, course);
+    const songFolder = path.dirname(filePath);
+    const jsonStem = sanitizeLabelJsonStem(path.basename(songFolder));
+    const promise = parseChart(chart, course, jsonStem);
     chartParsedPromises.push(promise);
   } else {
-    console.log(
-      `Could not find course with desired difficulty in ${tracksDir}/${songFolder}`,
-    );
+    console.log(`Could not find course with desired difficulty in ${filePath}`);
     continue;
   }
 }
