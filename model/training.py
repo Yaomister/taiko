@@ -132,8 +132,11 @@ def main() -> None:
         )
 
     # Save the model
-    torch.save(model.state_dict(), os.path.join(args.out_dir, "model.pth"))
-
+    torch.save({
+        "state_dict": model.state_dict(),
+        "n_classes": n_classes,
+        "args" : args,
+    }, args.out_path)
 
 
 
