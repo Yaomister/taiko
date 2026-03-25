@@ -163,16 +163,19 @@ def preprocess_dataset(
 
     # Save metadata
     metadata = {
+        "n_samples": n_samples,
+        "n_songs": n_songs,
+        "batch_size": batch_size,
+        "negative_ratio": cfg.negative_ratio,
+        "seed": cfg.seed,
         "sample_rate": SAMPLE_RATE,
         "hop_size": HOP_SIZE,
         "window_sizes": list(WINDOW_SIZES),
         "n_mels": N_MELS,
-        "context_frames": CONTEXT_FRAMES,
+        "per_window_context_frames": CONTEXT_FRAMES,
         "X_shape": "(N, 3, 15, 80)",
         "y_shape": "(N,) multi-class beat label at center frame (0=background)",
         "classes": {"0": "background", **{str(v): k for k, v in class_ids.items()}},
-        "n_samples": n_samples,
-        "n_songs": n_songs,
     }
     with open(f"{out_path}/metadata.json", "w") as file:
         json.dump(metadata, file)

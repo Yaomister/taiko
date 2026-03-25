@@ -324,6 +324,8 @@ def extract_windows(
 
     rng = rng or np.random.default_rng()
 
+    # TODO: right now, we're picking negatives randomly. Model may not be able to
+    # classify for harder cases where it's given a frame that's close to an onset
     if negative_ratio is None:
         neg_pick = neg_idx
     else:
