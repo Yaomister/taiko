@@ -6,6 +6,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import torch
 
 def load_all_batches(folder_dir : str) -> Tuple[np.ndarray, np.ndarray]:
+    """Load all batch_*.npz files from data_dir into a single X, y pair"""
     batch_files = sorted(glob.glob(os.path.join(folder_dir, "batch_*.npz")))
     if not batch_files:
         raise FileNotFoundError(f"No batch_*.npz files found in {folder_dir}")
@@ -23,6 +24,7 @@ def load_all_batches(folder_dir : str) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def split_data(X: np.ndarray, y: np.ndarray, split_prop: float, seed: int):
+     """Randomly split (X, y) into train and test datasets."""
      rng = np.random.default_rng(seed)
      n = len(X)
      split = max(1, int(n * split_prop))

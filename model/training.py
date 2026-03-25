@@ -1,19 +1,49 @@
+"""
+Training script for Taiko CNN note classifier. Loads preprocessed .npz batch files and trains the CNN model.
+
+Usage:
+    --data_dir data/preprocessed/train_data \\
+    --out_path models/my_model.pt \\
+    --epochs 100 \\
+    --lr 0.001 \\
+    --batch_size 256
+
+
+Arguments:
+    --data_dir (str): Directory containing batch_0.npz, batch_1.npz, ... and metadata.json (required)
+
+    --out_path (str): Path to save the trained model weights (required)
+
+    --epochs (int): Number of training epochs. Default is 100
+
+    --lr (float): Learning rate. Default is 0.001
+
+    --batch_size (int): Mini-batch size for training. Default is 256
+
+    --val_split (float): Proportion of data to use for validation. Default is 0.1
+
+    --seed (int): Random seed. Default is 0
+    
+    --dropout (float): Dropout rate on fully connected layers. Default is 0.5
+
+"""
+
+import os
+import random
+import json
+import argparse
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from cnn import CNN
 from typing import Tuple
-import argparse
-import numpy as np
 from training_utils import load_all_batches, split_data, make_dataset
-import os
-import random
-import json
 
 
 
 def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss_function = nn.Module, device = torch.device) -> float:
-    # this is per epoch
+    """Train one epoch"""
     model.train()
     total_loss = 0.0
     for X_batch, y_batch in loader:
@@ -28,7 +58,7 @@ def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss
 
 
 def evaluate(model: CNN, loader: DataLoader, loss_function: nn.Module, device: torch.device) -> Tuple[float, float]:
-    # returns the average loss and accuracy
+    """Returns the average loss and accuracy"""
     model.eval()
     total_loss, correct, total = 0.0, 0, 0
     for X_batch, y_batch in loader:
@@ -48,7 +78,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the CNN on preprocessed .npz data.")
     parser.add_argument("--data_dir", type=str, required=True, help="Directory with batch_*.npz files")
     parser.add_argument("--out_dir", type=str, required=True, help="Directory to save the trained model weights")
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--split_prop", type=int, default=0.1, help="The proportion of the dataset used for testing")
@@ -66,9 +96,8 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-
+    # Load the data
     print(f"Loading all saved batches from f{args.data_dir}")
-
     X, y = load_all_batches(args.data_dir)
     meta_path = os.path.join(args.data_dir, "metadata.json")
     n_classes = 3
@@ -77,18 +106,20 @@ def main() -> None:
             meta = json.load(f)
         n_classes = len(meta.get("classes", {})) or n_classes
 
+    # Split the dataset into training and testing sets
     X_train, y_train, X_test, y_test =split_data(X, y, args.split_prop, args.seed)
     print(f"Train: {len(X_train):,} samples, Test: {len(X_test):,} samples")
 
     train_dataset = make_dataset(X_train, y_train, args.batch_size, True)
     test_dataset = make_dataset(X_test, y_test, args.batch_size, False)
 
-
+    # Create the model
     model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
 
     optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
     loss_function = torch.nn.CrossEntropyLoss()
 
+    # Training loop
     print(f"Training for {args.epochs} epochs")
     for epoch in range(1, args.epochs + 1):
         train_loss = train(model, train_dataset, optimizer, loss_function, device)
@@ -100,6 +131,7 @@ def main() -> None:
             f"test_acc: {test_accuracy:.3%}"
         )
 
+    # Save the model
     torch.save(model.state_dict(), os.path.join(args.out_dir, "model.pth"))
 
 
