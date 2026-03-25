@@ -36,7 +36,6 @@ MAX_WINDOW = max(WINDOW_SIZES)
 # How much the track is zero-padded by so that the max window fits at the edges of the track
 CENTER_PAD_SAMPLES = MAX_WINDOW // 2
 N_MELS = 80
-LOG_MEL_EPS = 1e-10
 CONTEXT_FRAMES = 15
 CONTEXT_HALF = CONTEXT_FRAMES // 2
 SUPPORTED_AUDIO_TYPES = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
@@ -79,6 +78,7 @@ def _mel_filter_matrix(sr: int, n_fft: int, n_mels: int) -> np.ndarray:
     """
     _require_librosa()
     fb = librosa.filters.mel(sr=sr, n_fft=n_fft, n_mels=n_mels, fmin=0.0, fmax=sr / 2.0)
+    # throw away mirror half
     fb = np.asarray(fb[:, : n_fft // 2], dtype=np.float64)
     s = fb.sum(axis=1, keepdims=True)
     fb = fb / (s + 1e-10)
@@ -148,7 +148,7 @@ def _compute_mel_spectrogram_nfr(
         spec = np.fft.rfft(frame, n=window_size)
         power = (np.abs(spec[:half_fft]) ** 2).astype(np.float64)
         mel = fb @ power
-        out[i] = np.log(np.maximum(mel, LOG_MEL_EPS)).astype(np.float32)
+        out[i] = np.log(np.maximum(mel, 1e-10)).astype(np.float32)
 
     return out
 

@@ -2,77 +2,110 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from cnn import CNN
-from dataset import TrainingDataset
-from config import SpectrogramParameters
+from typing import Tuple
+import argparse
+import numpy as np
+from training_utils import load_all_batches, split_data, make_dataset
+import os
+import random
+import json
 
 
 
-def train(
-        track_dir: str,
-        json_dir: str,
-        epochs: int = 10,
-        batch_size: int = 64,
-        lr: float = 1e-3,
-        device: str = "cuda" if  torch.cuda.is_available() else "cpu"
-
-):
-    """
-    Trains the CNN on spectrogram patches extracted from a dataset of song.
-
-    Builds the dataset and dataloader, initializes the model, optimizer, and loss
-    function, then runs the training loop.
-
-    Args:
-        track_dir: absolute path to directory with the audio files
-        json_dir: absolute path to directory containing .json beat mapping files
-        epochs: the number of full passes through the dataset
-        batch_size: the number of samples per training batch
-        lr: the learning rate
-        device: the device to train on, defaults to gpu if available, otherwise cpu
-
-    Returns:
-        the trained CNN model
-    """
-    spectrogram_parameters = SpectrogramParameters()
-    # load the training dataset
-    ds = TrainingDataset(audio_file_dir=track_dir, json_dir=json_dir, spectrogram_parameters=spectrogram_parameters, examples_per_song=4000, hit_fraction=0.5)
-    loader = DataLoader(dataset=ds, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
-    # load the CNN model
-    model = CNN(in_degree=1, out_degree=8).to(device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr = lr)
-    criterion = nn.CrossEntropyLoss()
-
-    for epoch in range(1, epochs + 1):
-        model.train()
-        # keep track of stats to print when training is done
-        running_loss = 0.0
-        correct = 0
-        total = 0
-
-        for x, y in loader:
-            x = x.to(device)
-            y = y.to(device)
-
-            loss, logits = model.backprop(x, y, optimizer=optimizer, criterion=criterion)
-            running_loss += x.size(0) *  loss
-
-            preds = logits.argmax(dim = 1)
-            correct += (preds == y).sum().item()
-            total += y.numel()
-
-            print(f"epoch {epoch}, loss {running_loss/total:.4f}, acc {correct/total:.4f}, samples {total}")
-
-    return model
+def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss_function = nn.Module, device = torch.device) -> float:
+    # this is per epoch
+    model.train()
+    total_loss = 0.0
+    for X_batch, y_batch in loader:
+        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        optimizer.zero_grad()
+        logits = model(X_batch)
+        loss = loss_function(logits, y_batch)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item() + len(X_batch)
+    return total_loss / len(loader.dataset)
 
 
-def main():
-    model = train(
-        track_dir="data/tracks",
-        json_dir="data/track_data",
-        epochs=10
-    )
+def evaluate(model: CNN, loader: DataLoader, loss_function: nn.Module, device: torch.device) -> Tuple[float, float]:
+    # returns the average loss and accuracy
+    model.eval()
+    total_loss, correct, total = 0.0, 0, 0
+    for X_batch, y_batch in loader:
+        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        logits = model(X_batch)
+        preds = logits.argmax(dim=1)
+        loss = loss_function(logits, y_batch)
+        total_loss += loss.item() + len(X_batch)
+        correct += (preds == y_batch).sum().item()
+        total += len(X_batch)
 
-    torch.save(model.state_dict(), "model.pth")
+    return total_loss/ total, correct/ total
+
+    
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train the CNN on preprocessed .npz data.")
+    parser.add_argument("--data_dir", type=str, required=True, help="Directory with batch_*.npz files")
+    parser.add_argument("--out_dir", type=str, required=True, help="Directory to save the trained model weights")
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--split_prop", type=int, default=0.1, help="The proportion of the dataset used for testing")
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--seed", type=int, default=1)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+
+    print(f"Loading all saved batches from f{args.data_dir}")
+
+    X, y = load_all_batches(args.data_dir)
+    meta_path = os.path.join(args.data_dir, "metadata.json")
+    n_classes = 3
+    if os.path.exists(meta_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        n_classes = len(meta.get("classes", {})) or n_classes
+
+    X_train, y_train, X_test, y_test =split_data(X, y, args.split_prop, args.seed)
+    print(f"Train: {len(X_train):,} samples, Test: {len(X_test):,} samples")
+
+    train_dataset = make_dataset(X_train, y_train, args.batch_size, True)
+    test_dataset = make_dataset(X_test, y_test, args.batch_size, False)
+
+
+    model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
+
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
+    loss_function = torch.nn.CrossEntropyLoss()
+
+    print(f"Training for {args.epochs} epochs")
+    for epoch in range(1, args.epochs + 1):
+        train_loss = train(model, train_dataset, optimizer, loss_function, device)
+        test_loss, test_accuracy = evaluate(model, test_dataset, loss_function, device)
+        print(
+            f"Epoch {epoch}/{args.epochs}  |  "
+            f"train_loss: {train_loss:.4f}  |  "
+            f"test_loss: {test_loss:.4f}  |  "
+            f"test_acc: {test_accuracy:.3%}"
+        )
+
+    torch.save(model.state_dict(), os.path.join(args.out_dir, "model.pth"))
+
+
+
+
+
 
 if __name__ == "__main__":
     main()
