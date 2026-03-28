@@ -20,7 +20,7 @@ def load_all_batches(folder_dir : str) -> Tuple[np.ndarray, np.ndarray]:
         y_list.append(data['y'])
         print(f"Loaded {os.path.basename(path)}: {data['X'].shape[0]} samples")
 
-    return np.concat(X_list,axis=0), np.concat(y_list, axis=0)
+    return np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
 
 
 def split_data(X: np.ndarray, y: np.ndarray, split_prop: float, seed: int):

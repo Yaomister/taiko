@@ -1,89 +1,97 @@
+import os
+import random
+import json
+import argparse
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-
-from spectrogram import LogMelSpectrogram
+from typing import Tuple
 from mlp import MLP
+from training_utils import load_all_batches, split_data, make_dataset
 
-from dataset import TrainingDataset
-from config import SpectrogramParameters
+IN_FEATURES = 3 * 15 * 80  # 3600 — matches NPZ batch shape (3, 15, 80)
 
 
-def train(
-        track_dir: str,
-        json_dir: str,
-        epochs: int = 10,
-        batch_size: int = 64,
-        lr: float = 1e-3,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+def train(model, loader, optimizer, criterion, device) -> float:
+    model.train()
+    total_loss = 0.0
+    for x, y in loader:
+        x = x.to(device).view(x.size(0), 1, -1)
+        y = y.to(device)
+        loss, _ = model.backprop(x, y, optimizer=optimizer, criterion=criterion)
+        total_loss += loss * x.size(0)
+    return total_loss / len(loader.dataset)
 
-):
-    """
-    Train the MLP model on taiko beat data.
-
-    Loads audio files from track_dir and their corresponding beat annotations
-    from json_dir, builds a dataset, then trains the MLP for the given number of epochs.
-
-    Args:
-        track_dir: path to the folder containing song subfolders with audio files
-        json_dir:  path to the folder containing per-song JSON annotation files
-        epochs:    number of full passes over the dataset
-        batch_size: number of samples per gradient update
-        lr:        learning rate
-        device:    torch device string; defaults to CUDA if available, else CPU
-
-    Returns:
-        The trained MLP model (call model.eval() before inference).
-    """
-    spectrogram_parameters = SpectrogramParameters()
-
-    # Build the dataset
-    ds = TrainingDataset(audio_file_dir=track_dir, json_dir=json_dir, spectrogram_parameters=spectrogram_parameters, examples_per_song=4000, hit_fraction=0.5)
-    loader = DataLoader(dataset=ds, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
-
-    # MLP with attention: projects the flattened 80x64=5120 spectrogram patch into a
-    # 128-dim token, applies multi-head self-attention, then classifies into 8 note types
-    model = MLP(in_features=5120, out_degree=8).to(device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
-
-    # every epoch is a full pass through the dataset
-    for epoch in range(1, epochs + 1):
-        model.train()
-        running_loss = 0.0
-        # keep track of stats to report per-batch progress
-        correct = 0
-        total = 0
-
-        # x is the input data, y is the ground truth label index
+def evaluate(model, loader, criterion, device) -> Tuple[float, float]:
+    model.eval()
+    total_loss, correct, total = 0.0, 0, 0
+    with torch.no_grad():
         for x, y in loader:
-            x = x.to(device)
-            # Flatten the channel + frequency + time dims into a single sequence token of length 5120
-            x = x.view(x.size(0), 1, -1)
+            x = x.to(device).view(x.size(0), 1, -1)
             y = y.to(device)
-
-            # Single forward + backward + weight update step
-            loss, logits = model.backprop(x, y, optimizer=optimizer, criterion=criterion)
-
-            # Accumulate sample-weighted loss for a true running average across the epoch
-            running_loss += x.size(0) * loss
-
+            logits = model(x)
+            loss = criterion(logits, y)
+            total_loss += loss.item() * x.size(0)
             preds = logits.argmax(dim=1)
             correct += (preds == y).sum().item()
-            total += y.numel()
+            total += len(y)
+    return total_loss / total, correct / total
 
-            print(f"epoch {epoch}, loss {running_loss/total:.4f}, acc {correct/total:.4f}, samples {total}")
-    return model
-
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--out_path", type=str, required=True)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--split_prop", type=float, default=0.1)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--seed", type=int, default=1)
+    return parser.parse_args()
 
 def main():
-    model = train(
-        track_dir="../data/tracks",
-        json_dir="../data/track_data",
-        epochs=10
-    )
+    args = parse_args()
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
 
-    torch.save(model.state_dict(), "model_mlp.pth")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    print(f"Loading all saved batches from {args.data_dir}")
+    X, y = load_all_batches(args.data_dir)
+    
+    n_classes = 8
+    meta_path = os.path.join(args.data_dir, "metadata.json")
+    if os.path.exists(meta_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        n_classes = len(meta.get("classes", {})) or n_classes
+    
+    X_train, y_train, X_test, y_test = split_data(X, y, args.split_prop, args.seed)
+    print(f"Train: {len(X_train):,} samples, Test: {len(X_test):,} samples")
+
+    train_dataset = make_dataset(X_train, y_train, args.batch_size, True)
+    test_dataset = make_dataset(X_test, y_test, args.batch_size, False)
+
+    model = MLP(in_features=IN_FEATURES, out_degree=n_classes, dropout=args.dropout).to(device)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
+    loss_function = torch.nn.CrossEntropyLoss()
+
+    print(f"Training for {args.epochs} epochs")
+    for epoch in range(1, args.epochs + 1):
+        train_loss = train(model, train_dataset, optimizer, loss_function, device)
+        test_loss, test_accuracy = evaluate(model, test_dataset, loss_function, device)
+        print(f"Epoch {epoch}/{args.epochs}  |  train_loss: {train_loss:.4f}  |  test_loss: {test_loss:.4f}  |  test_acc: {test_accuracy:.3%}")
+    
+    torch.save({
+        "state_dict": model.state_dict(),
+        "n_classes":  n_classes,
+        "in_features": IN_FEATURES,
+        "args": vars(args),
+    }, args.out_path)
+    print(f"Saved to {args.out_path}")
 
 if __name__ == "__main__":
     main()
