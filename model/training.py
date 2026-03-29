@@ -3,7 +3,7 @@ Training script for Taiko CNN note classifier. Loads preprocessed .npz batch fil
 
 Usage:
     --data_dir data/preprocessed/train_data \\
-    --out_path models/my_model.pt \\
+    --out_dir models/my_model.pt \\
     --epochs 100 \\
     --lr 0.001 \\
     --batch_size 256
@@ -12,7 +12,7 @@ Usage:
 Arguments:
     --data_dir (str): Directory containing batch_0.npz, batch_1.npz, ... and metadata.json (required)
 
-    --out_path (str): Path to save the trained model weights (required)
+    --out_dir (str): Path to save the trained model weights (required)
 
     --epochs (int): Number of training epochs. Default is 100
 
@@ -53,7 +53,7 @@ def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss
         loss = loss_function(logits, y_batch)
         loss.backward()
         optimizer.step()
-        total_loss += loss.item() + len(X_batch)
+        total_loss += loss.item() * len(X_batch)
     return total_loss / len(loader.dataset)
 
 
@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch_size", type=int, default=256)
-    parser.add_argument("--split_prop", type=int, default=0.1, help="The proportion of the dataset used for testing")
+    parser.add_argument("--split_prop", type=float, default=0.1, help="The proportion of the dataset used for testing")
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=1)
     return parser.parse_args()
@@ -133,10 +133,10 @@ def main() -> None:
 
     # Save the model
     torch.save({
-        "state_dict": model.state_dict(),
-        "n_classes": n_classes,
-        "args" : args,
-    }, args.out_path)
+    "state_dict": model.state_dict(),
+    "n_classes": n_classes,
+    "args": vars(args), 
+    }, args.out_dir)    
 
 
 

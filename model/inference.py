@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'data', 'src'))
+
 from spectrogram_utils import (
     load_audio, compute_multi_resolution_mel,
     SAMPLE_RATE, HOP_SIZE, N_MELS, CONTEXT_FRAMES, CONTEXT_HALF
@@ -23,7 +24,7 @@ TJA_SPAN_START = {5: '7', 6: '9', 7: '5'}
 TJA_SPAN_END = '8'
 
 def load_model(path: str, device: torch.device):
-    info = torch.load(path, map_location=device)
+    info = torch.load(path, map_location=device, weights_only=False)
     state_dict = info['state_dict']
     n_classes = info['n_classes']
     args = info.get('args', {})
