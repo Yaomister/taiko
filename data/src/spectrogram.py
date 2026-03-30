@@ -38,6 +38,7 @@ Arguments:
 """
 
 from __future__ import annotations
+from tqdm import tqdm
 
 import argparse
 import json
@@ -84,9 +85,9 @@ def export_batch(
         sample_to_song=song_index_arr,  # Global sample index to song index in song_names
         song_names=song_names,
     )
-    print(
-        f"Saved batch {batch_num} to {file_path}, X={X_all.shape} y={y_all.shape} songs={len(song_names)}"
-    )
+    # print(
+    #     f"Saved batch {batch_num} to {file_path}, X={X_all.shape} y={y_all.shape} songs={len(song_names)}"
+    # )
 
 
 def preprocess_dataset(
@@ -117,23 +118,21 @@ def preprocess_dataset(
     # Make output directory if it doesn't exist
     os.makedirs(out_path, exist_ok=True)
 
-    for song_id, folder in enumerate(song_folders):
+    for song_id, folder in enumerate(tqdm(song_folders)):
         base = os.path.basename(folder)
         try:
             audio_path = get_audio_from_folder(folder)
         except FileNotFoundError as e:
-            print(f"Skipping {base}: {e}")
+            # print(f"Skipping {base}: {e}")
             continue
         json_path = os.path.join(json_dir, f"{base}.json")
         if not os.path.exists(json_path):
-            print(f"Skipping {base}: missing JSON {json_path}")
+            # print(f"Skipping {base}: missing JSON {json_path}")
             continue
 
-        print(f"Processing {base}...")
-        # TODO: can this be concurrent?
         X, y = process_song(audio_path, json_path, cfg, rng, allowed_types)
         if X.shape[0] == 0:
-            print(f"No samples for {base}, skipping.")
+            # print(f"No samples for {base}, skipping.")
             continue
         batch_X.append(X)
         batch_Y.append(y)

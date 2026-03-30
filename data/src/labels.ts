@@ -2,7 +2,13 @@ import { Course, Difficulty, Song, TJAParser } from "tja";
 import fs, { mkdirSync } from "fs";
 import path from "path";
 import { getCourseNoteTimes } from "./courseNotes.js";
-import { validateArgs } from "./labelUtils.js";
+import {
+  createChartJSON,
+  getAllTJAPaths as getAllTJAsRecursively,
+  ParseChartResult,
+  shortenText,
+  validateArgs,
+} from "./labelUtils.js";
 
 /**
  * Parses and creates JSON files containing timestamp and type labels for all notes in each track.
@@ -29,41 +35,6 @@ import { validateArgs } from "./labelUtils.js";
 const { courseDiff, outputDir: labelsParentDir, tracksDir } = validateArgs();
 const outDir = path.join(labelsParentDir, courseDiff.toString().toLowerCase());
 
-// function sanitizeLabelJsonStem(folderName: string): string {
-//   return folderName.replace(/[\\/:"*?<>| ]+/g, "_").trim();
-// }
-
-// Helpers
-// Parses the chart, then returns whether the chart already exists
-type ParseChartResult = {
-  chartName: string;
-  alreadyExists: boolean; // If the chart already existed when the script ran
-};
-
-const parseChart = (
-  chart: Song,
-  course: Course,
-  jsonStem: string,
-): Promise<ParseChartResult> => {
-  const outPath = `${outDir}/${jsonStem}.json`;
-  if (fs.existsSync(outPath)) {
-    return new Promise((resolve, reject) => {
-      resolve({ chartName: jsonStem, alreadyExists: true });
-    });
-  }
-  const notes = getCourseNoteTimes(chart, course);
-
-  return new Promise((resolve, reject) => {
-    fs.writeFile(outPath, JSON.stringify(notes, null, 2), (err) => {
-      if (err) {
-        reject("Failed to write to file");
-      }
-      resolve({ chartName: jsonStem, alreadyExists: false });
-    });
-  });
-};
-
-// Main logic
 if (!fs.existsSync(tracksDir)) {
   throw Error(
     `Couldn't find tracks directory ${tracksDir}. Check if it exists.`,
@@ -75,34 +46,23 @@ if (!fs.existsSync(outDir)) {
   console.log(`Found output directory ${outDir}.`);
 }
 
-// Recursively find all TJA paths
-function getAllTJAPaths(dir: string): string[] {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-  return entries.flatMap((entry) => {
-    const fullPath = path.join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      return getAllTJAPaths(fullPath);
-    } else if (entry.isFile() && entry.name.endsWith(".tja")) {
-      return [fullPath];
-    }
-
-    return [];
-  });
-}
-
-const filePaths: string[] = getAllTJAPaths(tracksDir);
+const filePaths: string[] = getAllTJAsRecursively(tracksDir);
+// For error message at the end
+const failedJSONWrite: string[] = [];
+const failedParse: string[] = [];
+const missingDiff: string[] = [];
 
 // Find .tja files and parse them
-let chartParsedPromises: Promise<ParseChartResult>[] = [];
+let results: ParseChartResult[] = [];
 for (const filePath of filePaths) {
-  const tjaContent = fs.readFileSync(filePath, "utf-8");
+  const content = fs.readFileSync(filePath, { encoding: "utf-8" });
   let chart: Song;
+
   try {
-    chart = TJAParser.parse(tjaContent, true);
+    chart = TJAParser.parse(content, true);
   } catch (err) {
-    console.log(`Failed to parse ${filePath}: ${err}`);
+    const name = path.basename(filePath);
+    failedParse.push(name);
     continue;
   }
 
@@ -112,23 +72,49 @@ for (const filePath of filePaths) {
   if (course) {
     const songFolder = path.dirname(filePath);
     const jsonStem = path.basename(songFolder);
-    const promise = parseChart(chart, course, jsonStem);
-    chartParsedPromises.push(promise);
+    let res;
+    try {
+      res = createChartJSON(chart, course, jsonStem, outDir);
+    } catch (err) {
+      failedJSONWrite.push(chart.title);
+      continue;
+    }
+    results.push(res);
   } else {
-    console.log(`Could not find course with desired difficulty in ${filePath}`);
+    missingDiff.push(chart.title);
     continue;
   }
 }
 
-const results: ParseChartResult[] = await Promise.all(chartParsedPromises);
+const newlyParsed = results.reduce(
+  (prev, curr) => (curr.alreadyExists ? prev : prev + 1),
+  0,
+);
 
-const parsed = results.reduce((totalParsed, parsedChartRes) => {
-  if (parsedChartRes.alreadyExists) {
-    console.log(
-      `${parsedChartRes.chartName} with difficulty ${courseDiff.toString()} has already been parsed, so it was skipped.`,
-    );
-  }
-  return parsedChartRes.alreadyExists ? totalParsed : totalParsed + 1;
-}, 0);
+if (failedJSONWrite.length !== 0) {
+  const songNames = shortenText(failedJSONWrite.join(", "));
+  console.log(
+    `Failed to create label files for ${failedJSONWrite.length} song(s): ` +
+      songNames,
+  );
+}
+if (failedParse.length !== 0) {
+  const songNames = shortenText(failedParse.join(", "));
+  console.log(
+    `Invalid TJA formatting found for ${failedParse.length} song(s): ` +
+      songNames,
+  );
+}
+if (missingDiff.length !== 0) {
+  const songNames = shortenText(missingDiff.join(", "));
+  console.log(
+    `Couldn't find requested difficulty for ${missingDiff.length} song(s): ` +
+      songNames,
+  );
+}
 
-console.log(`Successfully parsed ${parsed} chart(s).`);
+if (newlyParsed === 0) {
+  console.log("No new labels created, all songs found were already parsed.");
+} else {
+  console.log(`Successfully created labels for ${newlyParsed} chart(s).`);
+}

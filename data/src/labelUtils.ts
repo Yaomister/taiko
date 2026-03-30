@@ -1,17 +1,68 @@
 import path from "path";
 import { fileURLToPath } from "url";
-import { Difficulty } from "tja";
+import { Course, Difficulty, Song } from "tja";
+import { getCourseNoteTimes } from "./courseNotes.js";
+import fs, { mkdirSync } from "fs";
 
 const _thisFile = fileURLToPath(import.meta.url);
 const _thisDir = path.dirname(_thisFile);
 /** Default when no tracks dir is passed: <data>/tracks (sibling of dst/ when compiled). */
-export const defaultTracksDir = (): string => path.resolve(_thisDir, "..", "tracks");
+export const defaultTracksDir = (): string =>
+  path.resolve(_thisDir, "..", "tracks");
 
 export type LabelCliArgs = {
   courseDiff: Difficulty;
   outputDir: string;
   tracksDir: string;
 };
+
+// Parses the chart, then returns whether the chart already exists
+export type ParseChartResult = {
+  chartName: string;
+  alreadyExists: boolean; // If the chart already existed when the script ran
+};
+
+// Throws error if we failt o write to a file
+export const createChartJSON = (
+  chart: Song,
+  course: Course,
+  jsonStem: string,
+  outDir: string,
+): ParseChartResult => {
+  const outPath = `${outDir}/${jsonStem}.json`;
+  if (fs.existsSync(outPath)) {
+    return { chartName: jsonStem, alreadyExists: true };
+  }
+  const notes = getCourseNoteTimes(chart, course);
+
+  try {
+    fs.writeFileSync(outPath, JSON.stringify(notes, null, 2));
+  } catch (err) {
+    throw Error("Failed to write chart: " + err);
+  }
+
+  return { chartName: jsonStem, alreadyExists: false };
+};
+
+// Recursively finds all TJA paths in a folder
+export const getAllTJAPaths = (dir: string): string[] => {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  return entries.flatMap((entry) => {
+    const fullPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      return getAllTJAPaths(fullPath);
+    } else if (entry.isFile() && entry.name.endsWith(".tja")) {
+      return [fullPath];
+    }
+
+    return [];
+  });
+};
+
+export const shortenText = (text: string) =>
+  text.length > 50 ? text.substring(0, 50) + "..." : text;
 
 export const validateArgs = (): LabelCliArgs => {
   const args: string[] = process.argv.slice(2);
