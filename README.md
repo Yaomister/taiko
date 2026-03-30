@@ -75,7 +75,7 @@ Trains a CNN on the preprocessed `.npz` batch files produced by the data pipelin
 ### Usage
 
 ```bash
-python model/train.py \
+python model/training.py \
   --data_dir data/preprocessed/exports/my_dataset \
   --out_dir models/my_model.pth
 ```

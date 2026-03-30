@@ -1,5 +1,3 @@
-
-
 """
 Runsthe trained Taiko CNN or MLP on an audio file and writes a .tja chart.
  
@@ -33,11 +31,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'data', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data", "src"))
 
 from spectrogram_utils import (
-    load_audio, compute_multi_resolution_mel,
-    SAMPLE_RATE, HOP_SIZE, N_MELS, CONTEXT_FRAMES, CONTEXT_HALF
+    load_audio,
+    compute_multi_resolution_mel,
+    SAMPLE_RATE,
+    HOP_SIZE,
+    N_MELS,
+    CONTEXT_FRAMES,
+    CONTEXT_HALF,
 )
 
 from cnn import CNN
@@ -46,34 +49,35 @@ from mlp import MLP
 IN_FEATURES = 3 * 15 * 80  # 3600
 SUBDIVISIONS = 16
 BEATS_PER_MEASURE = 4
-TJA_SINGLE = {1: '1', 2: '2', 3: '3', 4: '4'}
-TJA_SPAN_START = {5: '7', 6: '9', 7: '5'}
-TJA_SPAN_END = '8'
+TJA_SINGLE = {1: "1", 2: "2", 3: "3", 4: "4"}
+TJA_SPAN_START = {5: "7", 6: "9", 7: "5"}
+TJA_SPAN_END = "8"
+
 
 def load_model(path: str, device: torch.device):
     """
     Loads a trained model.
- 
+
     Args:
         path: path to .pth file
         device: cpu or cuda
- 
+
     Returns:
         model: loaded model in eval mode
         model_type: 'cnn' or 'mlp'
     """
     info = torch.load(path, map_location=device, weights_only=False)
-    state_dict = info['state_dict']
-    n_classes = info['n_classes']
-    args = info.get('args', {})
-    dropout = args.get('dropout', 0.5)
+    state_dict = info["state_dict"]
+    n_classes = info["n_classes"]
+    args = info.get("args", {})
+    dropout = args.get("dropout", 0.5)
 
-    if 'in_features' in info:
-        model_type = 'mlp'
-        in_features = info['in_features']
+    if "in_features" in info:
+        model_type = "mlp"
+        in_features = info["in_features"]
         model = MLP(in_features=in_features, out_degree=n_classes, dropout=dropout)
     else:
-        model_type = 'cnn'
+        model_type = "cnn"
         model = CNN(in_degree=3, out_degree=n_classes, dropout=dropout)
 
     model.load_state_dict(state_dict)
@@ -82,18 +86,24 @@ def load_model(path: str, device: torch.device):
     print(f"Loaded {model_type} model: {n_classes} classes")
     return model, model_type
 
-    
-def predict_frames(model: nn.Module, model_type: str, audio: np.ndarray, device: torch.device, batch_size: int = 64):
+
+def predict_frames(
+    model: nn.Module,
+    model_type: str,
+    audio: np.ndarray,
+    device: torch.device,
+    batch_size: int = 64,
+):
     """
     Runs the model on every frame of the audio and returns class probabilities.
- 
+
     Args:
         model: loaded model in eval mode
         model_type: 'cnn' or 'mlp'
         audio: raw audio samples as numpy array
         device: cpu or cuda
         batch_size: number of windows to process at once. Default: 64
- 
+
     Returns:
         all_probs: probabilities for every frame
         centers: list of frame indices corresponding to each row in all_probs
@@ -109,33 +119,33 @@ def predict_frames(model: nn.Module, model_type: str, audio: np.ndarray, device:
     all_probs = []
     with torch.no_grad():
         for start in range(0, len(X), batch_size):
-            chunk = torch.from_numpy(X[start:start + batch_size]).to(device)
-            if model_type == 'mlp':
+            chunk = torch.from_numpy(X[start : start + batch_size]).to(device)
+            if model_type == "mlp":
                 chunk = chunk.view(chunk.size(0), 1, -1)
             logits = model(chunk)
-            probs  = torch.softmax(logits, dim=1).cpu().numpy()
+            probs = torch.softmax(logits, dim=1).cpu().numpy()
             all_probs.append(probs)
 
     all_probs = np.concatenate(all_probs, axis=0)
     return all_probs, centers
 
-    
+
 def postprocess(probs, frame_indices, threshold=0.5, min_gap_frames=3):
     """
     Converts per-frame probabilities into a list of note events.
- 
+
     Single notes (don, ka, bigDon, bigKa): keeps the first detection in each
     cluster, enforcing a minimum gap of min_gap_frames between same-class hits.
- 
+
     Held notes (drumroll, bigDrumroll, balloon): merges consecutive frames of
     the same class into one event with a start and end time.
- 
+
     Args:
         probs: probabilities from predict_frames
         frame_indices: list of frame indices from predict_frames
         threshold: minimum confidence to count as a note. Default is 0.5
         min_gap_frames: minimum frames between detections of the same class. Default is 3
- 
+
     Returns:
         events: list of dicts sorted by time_ms. Single notes have keys
                 {time_ms, type}. Held notes also have {end_time_ms}.
@@ -171,21 +181,24 @@ def postprocess(probs, frame_indices, threshold=0.5, min_gap_frames=3):
                 if in_span:
                     span_end = frame_indices[k - 1]
                     t_start = span_start * HOP_SIZE / SAMPLE_RATE * 1000.0
-                    t_end = span_end   * HOP_SIZE / SAMPLE_RATE * 1000.0
-                    events.append({"time_ms": t_start, "end_time_ms": t_end, "type": cls})
+                    t_end = span_end * HOP_SIZE / SAMPLE_RATE * 1000.0
+                    events.append(
+                        {"time_ms": t_start, "end_time_ms": t_end, "type": cls}
+                    )
                     in_span = False
         if in_span:
             span_end = frame_indices[-1]
             t_start = span_start * HOP_SIZE / SAMPLE_RATE * 1000.0
-            t_end = span_end   * HOP_SIZE / SAMPLE_RATE * 1000.0
+            t_end = span_end * HOP_SIZE / SAMPLE_RATE * 1000.0
             events.append({"time_ms": t_start, "end_time_ms": t_end, "type": cls})
     events.sort(key=lambda e: e["time_ms"])
     return events
 
+
 def write_tja(events, bpm, title, wave, offset, out_path):
     """
     Converts note mapping into a .tja chart file.
- 
+
     Args:
         events: list of note events from postprocess
         bpm: song BPM used to compute the subdivision grid
@@ -206,7 +219,7 @@ def write_tja(events, bpm, title, wave, offset, out_path):
             grid[sub_idx] = TJA_SINGLE[cls]
         elif cls in TJA_SPAN_START:
             grid[sub_idx] = TJA_SPAN_START[cls]
-            end_sub       = int(round(ev["end_time_ms"] / ms_per_sub))
+            end_sub = int(round(ev["end_time_ms"] / ms_per_sub))
             grid[end_sub] = TJA_SPAN_END
 
     lines = [
@@ -226,13 +239,12 @@ def write_tja(events, bpm, title, wave, offset, out_path):
         measure_str = ""
         for s in range(subs_per_measure):
             sub = m * subs_per_measure + s
-            measure_str += grid.get(sub, '0')
+            measure_str += grid.get(sub, "0")
         lines.append(measure_str + ",")
     lines.append("#END")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"Written to {out_path}")
-
 
 
 def parse_args():
