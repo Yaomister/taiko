@@ -1,3 +1,30 @@
+
+
+"""
+Runsthe trained Taiko CNN or MLP on an audio file and writes a .tja chart.
+ 
+Usage:
+    python inference.py \\
+        --audio path/to/song.mp3 \\
+        --bpm 140 \\
+        --model path/to/model.pth \\
+        --out path/to/output.tja \\
+        --title "My Song" \\
+        --offset 0.0 \\
+        --threshold 0.5
+ 
+Arguments:
+    --audio (str): Path to input audio file (required)
+    --bpm (float): BPM of the song (required). Songs with beats per minute changes will produce inaccurate charts.
+    --model (str): Path to trained model checkpoint .pth file (required)
+    --out (str): Path to write output .tja file (required)
+    --title (str): Song title in TJA header. Default is "Untitled"
+    --offset (float): Seconds of silence before music starts. Default is 0.0
+    --threshold (float): Minimum confidence to count as a note (0-1). Default is 0.5
+                         Higher = fewer notes, fewer false positives.
+                         Lower  = more notes, more false positives.
+"""
+
 import argparse
 import os
 import sys
@@ -24,6 +51,17 @@ TJA_SPAN_START = {5: '7', 6: '9', 7: '5'}
 TJA_SPAN_END = '8'
 
 def load_model(path: str, device: torch.device):
+    """
+    Loads a trained model.
+ 
+    Args:
+        path: path to .pth file
+        device: cpu or cuda
+ 
+    Returns:
+        model: loaded model in eval mode
+        model_type: 'cnn' or 'mlp'
+    """
     info = torch.load(path, map_location=device, weights_only=False)
     state_dict = info['state_dict']
     n_classes = info['n_classes']
@@ -46,6 +84,21 @@ def load_model(path: str, device: torch.device):
 
     
 def predict_frames(model: nn.Module, model_type: str, audio: np.ndarray, device: torch.device, batch_size: int = 64):
+    """
+    Runs the model on every frame of the audio and returns class probabilities.
+ 
+    Args:
+        model: loaded model in eval mode
+        model_type: 'cnn' or 'mlp'
+        audio: raw audio samples as numpy array
+        device: cpu or cuda
+        batch_size: number of windows to process at once. Default: 64
+ 
+    Returns:
+        all_probs: probabilities for every frame
+        centers: list of frame indices corresponding to each row in all_probs
+    """
+
     mel_specs, n_frames = compute_multi_resolution_mel(audio)
     centers = list(range(CONTEXT_HALF, n_frames - CONTEXT_HALF))
     X = np.empty((len(centers), 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32)
@@ -68,6 +121,25 @@ def predict_frames(model: nn.Module, model_type: str, audio: np.ndarray, device:
 
     
 def postprocess(probs, frame_indices, threshold=0.5, min_gap_frames=3):
+    """
+    Converts per-frame probabilities into a list of note events.
+ 
+    Single notes (don, ka, bigDon, bigKa): keeps the first detection in each
+    cluster, enforcing a minimum gap of min_gap_frames between same-class hits.
+ 
+    Held notes (drumroll, bigDrumroll, balloon): merges consecutive frames of
+    the same class into one event with a start and end time.
+ 
+    Args:
+        probs: probabilities from predict_frames
+        frame_indices: list of frame indices from predict_frames
+        threshold: minimum confidence to count as a note. Default is 0.5
+        min_gap_frames: minimum frames between detections of the same class. Default is 3
+ 
+    Returns:
+        events: list of dicts sorted by time_ms. Single notes have keys
+                {time_ms, type}. Held notes also have {end_time_ms}.
+    """
     predictions = probs.argmax(axis=1)
     confidences = probs.max(axis=1)
     events = []
@@ -111,6 +183,17 @@ def postprocess(probs, frame_indices, threshold=0.5, min_gap_frames=3):
     return events
 
 def write_tja(events, bpm, title, wave, offset, out_path):
+    """
+    Converts note mapping into a .tja chart file.
+ 
+    Args:
+        events: list of note events from postprocess
+        bpm: song BPM used to compute the subdivision grid
+        title: song title written into the TJA header
+        wave: audio filename written into the TJA header
+        offset: seconds of silence before music starts
+        out_path: path to write the .tja file
+    """
     ms_per_beat = 60000.0 / bpm
     ms_per_sub = ms_per_beat / SUBDIVISIONS
     subs_per_measure = SUBDIVISIONS * BEATS_PER_MEASURE
