@@ -95,10 +95,8 @@ if [[ $clear_flag != '' && -d "$existing_labels" ]]; then
 fi
 
 # Compile scripts, validate arguments
-if [[ ! -f "$LABELLER_PATH" || ! -f "$ARGS_VALIDATOR_PATH" ]]; then
-    echo "Labeller scripts not found, compiling new scripts."
-    tsc -p "$DATA_DIR"
-fi
+echo "Compiling labeller scripts..."
+tsc -p "$DATA_DIR"
 
 node "$ARGS_VALIDATOR_PATH" "$diff_flag" "$LABELS_DIR" "$TRACKS_DIR"
 if [ $? -ne 0 ]; then
