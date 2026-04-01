@@ -38,8 +38,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from cnn import CNN
 from typing import Tuple
-from training_utils import load_all_batches, split_data, make_dataset
-
+import glob
+from torch.utils.data import TensorDataset
 
 
 def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss_function = nn.Module, device = torch.device) -> float:
@@ -66,11 +66,11 @@ def evaluate(model: CNN, loader: DataLoader, loss_function: nn.Module, device: t
         logits = model(X_batch)
         preds = logits.argmax(dim=1)
         loss = loss_function(logits, y_batch)
-        total_loss += loss.item() + len(X_batch)
+        total_loss += loss.item() * len(X_batch)
         correct += (preds == y_batch).sum().item()
         total += len(X_batch)
 
-    return total_loss/ total, correct/ total
+    return total_loss / total, correct / total, total
 
     
 
@@ -97,21 +97,14 @@ def main() -> None:
     print(f"Using device: {device}")
 
     # Load the data
-    print(f"Loading all saved batches from f{args.data_dir}")
-    X, y = load_all_batches(args.data_dir)
     meta_path = os.path.join(args.data_dir, "metadata.json")
-    n_classes = 3
-    if os.path.exists(meta_path):
-        with open(meta_path) as f:
-            meta = json.load(f)
-        n_classes = len(meta.get("classes", {})) or n_classes
-
-    # Split the dataset into training and testing sets
-    X_train, y_train, X_test, y_test =split_data(X, y, args.split_prop, args.seed)
-    print(f"Train: {len(X_train):,} samples, Test: {len(X_test):,} samples")
-
-    train_dataset = make_dataset(X_train, y_train, args.batch_size, True)
-    test_dataset = make_dataset(X_test, y_test, args.batch_size, False)
+    with open(meta_path) as f:
+        meta = json.load(f)
+    n_classes = len(meta.get("classes", {})) or 3
+    n_samples = meta["n_samples"]
+    val_start = int(n_samples * (1 - args.split_prop))
+    batch_files = sorted(glob.glob(os.path.join(args.data_dir, "batch_*.npz")))
+    print(f"Total samples: {n_samples:,} | Train: {val_start:,} | Val: {n_samples - val_start:,}")
 
     # Create the model
     model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
@@ -122,21 +115,50 @@ def main() -> None:
     # Training loop
     print(f"Training for {args.epochs} epochs")
     for epoch in range(1, args.epochs + 1):
-        train_loss = train(model, train_dataset, optimizer, loss_function, device)
-        test_loss, test_accuracy = evaluate(model, test_dataset, loss_function, device)
-        print(
-            f"Epoch {epoch}/{args.epochs}  |  "
-            f"train_loss: {train_loss:.4f}  |  "
-            f"test_loss: {test_loss:.4f}  |  "
-            f"test_acc: {test_accuracy:.3%}"
-        )
+        train_loss_sum, val_loss_sum, correct, total, train_total = 0.0, 0.0, 0, 0, 0
+        samples_seen = 0
+
+        for path in batch_files:
+            data = np.load(path)
+            X = torch.from_numpy(data["X"].astype(np.float32))
+            y = torch.from_numpy(data["y"].astype(np.int64))
+            n = len(X)
+
+            batch_train_end = max(0, min(n, val_start - samples_seen))
+            batch_val_start = batch_train_end
+
+            if batch_train_end > 0:
+                loader = DataLoader(TensorDataset(X[:batch_train_end], y[:batch_train_end]),
+                                    batch_size=args.batch_size, shuffle=True)
+                train_loss_sum += train(model, loader, optimizer, loss_function, device) * batch_train_end
+                train_total += batch_train_end
+
+            if batch_val_start < n:
+                loader = DataLoader(TensorDataset(X[batch_val_start:], y[batch_val_start:]),
+                                    batch_size=args.batch_size, shuffle=False)
+                bl, bc, bt = evaluate(model, loader, loss_function, device)
+                val_loss_sum += bl * bt
+                correct += int(bc * bt)
+                total += bt
+
+            samples_seen += n
+            del X, y, data
+
+    print(
+        f"Epoch {epoch}/{args.epochs}  |  "
+        f"train_loss: {train_loss_sum/train_total:.4f}  |  "
+        f"val_loss: {val_loss_sum/total:.4f}  |  "
+        f"val_acc: {correct/total:.3%}"
+    )
 
     # Save the model
     torch.save({
     "state_dict": model.state_dict(),
     "n_classes": n_classes,
     "args": vars(args), 
-    }, args.out_dir)    
+    }, args.out_dir)   
+
+     
 
 
 
