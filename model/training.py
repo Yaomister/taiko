@@ -101,10 +101,11 @@ def main() -> None:
     with open(meta_path) as f:
         meta = json.load(f)
     n_classes = len(meta.get("classes", {})) or 3
-    n_samples = meta["n_samples"]
-    val_start = int(n_samples * (1 - args.split_prop))
     batch_files = sorted(glob.glob(os.path.join(args.data_dir, "batch_*.npz")))
-    print(f"Total samples: {n_samples:,} | Train: {val_start:,} | Val: {n_samples - val_start:,}")
+    n_samples = sum(len(np.load(p)["X"]) for p in batch_files)
+    print(f"Counted {n_samples:,} samples from {len(batch_files)} batch files")
+    val_start = int(n_samples * (1 - args.split_prop))
+
 
     # Create the model
     model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
@@ -144,12 +145,12 @@ def main() -> None:
             samples_seen += n
             del X, y, data
 
-    print(
-        f"Epoch {epoch}/{args.epochs}  |  "
-        f"train_loss: {train_loss_sum/train_total:.4f}  |  "
-        f"val_loss: {val_loss_sum/total:.4f}  |  "
-        f"val_acc: {correct/total:.3%}"
-    )
+        print(
+            f"Epoch {epoch}/{args.epochs}  |  "
+            f"train_loss: {train_loss_sum/train_total:.4f}  |  "
+            f"val_loss: {val_loss_sum/total:.4f}  |  "
+            f"val_acc: {correct/total:.3%}"
+        )
 
     # Save the model
     torch.save({
