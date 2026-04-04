@@ -51,7 +51,8 @@ from .spectrogram_utils import NOTE_TYPE_TO_ID, ID_TO_NOTE_TYPE
 
 import numpy as np
 from math import ceil
-from collections import defaultdict, Counter
+from collections import defaultdict
+import psutil, os
 
 from data.src.spectrogram_utils import (
     CONTEXT_FRAMES,
@@ -66,7 +67,7 @@ from data.src.spectrogram_utils import (
     process_song,
 )
 
-def export_batch(
+def export_and_clear_batch(
     batch_X: List[np.ndarray],
     batch_Y: List[np.ndarray],
     batch_num: int,
@@ -142,6 +143,9 @@ def preprocess_dataset(
             continue
 
         X, y = process_song(audio_path, json_path, cfg, rng, allowed_types)
+        proc = psutil.Process(os.getpid())
+        pbar.set_description_str(f"Mem: {proc.memory_info().rss / 1e6:.1f} MB")
+
         if X.shape[0] == 0:
             # print(f"No samples for {base}, skipping.")
             continue
@@ -169,7 +173,7 @@ def preprocess_dataset(
             pbar.set_postfix(dist)
 
             # This clears batch_X and batch_Y, so print the class distribution before
-            export_batch(
+            export_and_clear_batch(
                 batch_num=batch_num,
                 batch_X=batch_X,
                 batch_Y=batch_Y,
@@ -177,7 +181,6 @@ def preprocess_dataset(
                 sample_to_song=batch_sample_to_song,
                 song_names=batch_song_names,
             )
-            pbar.set_description_str(f"Completed batch {batch_num}")
 
             # Reset all batch-related data
             batch_sample_to_song.clear()
