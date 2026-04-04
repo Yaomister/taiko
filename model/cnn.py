@@ -18,14 +18,14 @@ class CNN(nn.Module):
     def __init__(self, in_degree: int = 3, out_degree: int = 3, dropout: float = 0.5):
         super(CNN, self).__init__()
         # in the onset detection paper they're using rectangular kernels because we care more about changes over time than frequency
-        self.conv1 = nn.Conv2d(in_channels=in_degree, out_channels=32, kernel_size=(3, 7))
-        self.pool1 = nn.MaxPool2d(kernel_size=(3, 1), stride=(1, 1))
+        self.conv1 = nn.Conv2d(in_channels=in_degree, out_channels=32, kernel_size=(7, 3))
+        self.pool1 = nn.MaxPool2d(kernel_size=(1, 3), stride=(1, 3))
 
         self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(3, 3))
-        self.pool2 = nn.MaxPool2d(kernel_size=(3, 1), stride=(1, 1))
+        self.pool2 = nn.MaxPool2d(kernel_size=(1, 3), stride=(1, 3))
 
         self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(3, 3))
-        self.pool3 = nn.MaxPool2d(kernel_size=(3, 1), stride=(1, 1))
+        self.pool3 = nn.MaxPool2d(kernel_size=(1, 3), stride=(1, 3))
 
         # figure out the flat size (easier to finetune)
         with torch.no_grad():
@@ -36,8 +36,8 @@ class CNN(nn.Module):
             flat_size = dummy.flatten(start_dim=1).size(1)
 
         self.dropout = nn.Dropout(p = dropout)
-        self.fc1 = nn.Linear(in_features=flat_size, out_features=128)
-        self.fc2 = nn.Linear(in_features=128, out_features=out_degree)
+        self.fc1 = nn.Linear(in_features=flat_size, out_features=256)
+        self.fc2 = nn.Linear(in_features=256, out_features=out_degree)
         
 
 
@@ -57,7 +57,7 @@ class CNN(nn.Module):
         # dim 0 is the batch size
         x = x.flatten(start_dim = 1)
         x = self.dropout(x)
-        x = self.fc1(x)
+        x = functional.relu(self.fc1(x)) 
         x = self.dropout(x)        
         x = self.fc2(x)
         return x
