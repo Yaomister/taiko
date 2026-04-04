@@ -155,6 +155,17 @@ def preprocess_dataset(
             batch_num = ceil(song_id / batch_size)
             if not batch_X:
                 raise RuntimeError("No training samples generated.")
+            
+            for arr in batch_Y:
+                for id in arr.flat:
+                    class_cnts[id] += 1
+
+            # Display class distribution
+            total = sum(class_cnts.values())
+            dist = {ID_TO_NOTE_TYPE[int(k)]: f"{v/total:.2%}" for k, v in class_cnts.items()}
+            pbar.set_postfix(dist)
+
+            # This clears batch_X and batch_Y, so print the class distribution before
             export_batch(
                 batch_num=batch_num,
                 batch_X=batch_X,
@@ -163,19 +174,13 @@ def preprocess_dataset(
                 sample_to_song=batch_sample_to_song,
                 song_names=batch_song_names,
             )
+            pbar.set_description_str(f"Wrote batch ${batch_num}")
 
-            for arr in batch_Y:
-                for id in arr.flat:
-                    class_cnts[id] += 1
 
             # Reset all batch-related data
             batch_sample_to_song.clear()
             batch_song_names.clear()
 
-            # Display class distribution
-            total = sum(class_cnts.values())
-            dist = {ID_TO_NOTE_TYPE[int(k)]: f"{v/total:.2%}" for k, v in class_cnts.items()}
-            pbar.set_postfix(dist)
 
     # Save metadata
     metadata = {
