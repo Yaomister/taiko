@@ -64,7 +64,6 @@ from data.src.spectrogram_utils import (
     process_song,
 )
 
-
 def export_batch(
     batch_X: List[np.ndarray],
     batch_Y: List[np.ndarray],
@@ -73,8 +72,14 @@ def export_batch(
     sample_to_song: List[int],
     song_names: List[str],
 ):
+    """
+    Exports a batch to a given output path. Note that this function clears batch_X and batch_Y
+    to save memory.
+    """
     X_all = np.concatenate(batch_X, axis=0)
+    batch_X.clear() 
     y_all = np.concatenate(batch_Y, axis=0)
+    batch_Y.clear()
     song_index_arr = np.asarray(sample_to_song, dtype=np.int64)
 
     # Export batch to .npz
@@ -159,10 +164,13 @@ def preprocess_dataset(
                 song_names=batch_song_names,
             )
 
-            all_y = np.concatenate(batch_Y)  
-            class_cnts = dict(Counter(class_cnts) + Counter(all_y))
+            for arr in batch_Y:
+                for id in arr.flat:
+                    class_cnts[id] += 1
+
             # Reset all batch-related data
-            batch_X, batch_Y, batch_sample_to_song, batch_song_names = [], [], [], []
+            batch_sample_to_song.clear()
+            batch_song_names.clear()
 
             # Display class distribution
             total = sum(class_cnts.values())
