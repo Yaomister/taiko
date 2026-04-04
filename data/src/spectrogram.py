@@ -35,6 +35,8 @@ Arguments:
     
     --seed (int): Random seed for reproducibility.
     Default: 0
+    
+    --diff (str): Difficulty level of the songs.
 """
 
 from __future__ import annotations
@@ -100,6 +102,7 @@ def preprocess_dataset(
     audio_dir: str,
     json_dir: str,
     out_path: str,
+    diff: str,
     batch_size: int,
     cfg: OnsetPipelineConfig,
     allowed_types: List[NoteType],
@@ -174,8 +177,7 @@ def preprocess_dataset(
                 sample_to_song=batch_sample_to_song,
                 song_names=batch_song_names,
             )
-            pbar.set_description_str(f"Wrote batch ${batch_num}")
-
+            pbar.set_description_str(f"Completed batch {batch_num}")
 
             # Reset all batch-related data
             batch_sample_to_song.clear()
@@ -187,6 +189,7 @@ def preprocess_dataset(
         "n_samples": n_samples,
         "n_songs": n_songs,
         "batch_size": batch_size,
+        "diff": diff,
         "classes": {str(v): k for k, v in class_ids.items()},
         "class_counts": {ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()},
         "negative_ratio": cfg.negative_ratio,
@@ -208,6 +211,11 @@ def parse_args() -> argparse.Namespace:
         description="Build onset dataset: X (N,3,15,80), y binary."
     )
     parser.add_argument("--audio_dir", type=str, default="data/tracks")
+    parser.add_argument(
+        "--diff",
+        type=str,
+        help="Difficulty level of songs in this dataset.",
+    )
     parser.add_argument(
         "--negative_ratio",
         type=float,
@@ -262,6 +270,7 @@ def main() -> None:
         json_dir=args.json_dir,
         out_path=args.out_path,
         cfg=cfg,
+        diff=args.diff,
         allowed_types=allowed_types,
         batch_size=args.batch_size,
     )

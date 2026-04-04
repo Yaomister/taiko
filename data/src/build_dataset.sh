@@ -122,6 +122,7 @@ cmd=(
   --json_dir "${LABELS_DIR}/${diff_folder}"
   --out_path "$export_dir"
   --note_types "$note_types"
+  --diff "$diff_flag"
 )
 
 if [[ -n "$batch_size" ]]; then # Batch size is optional, may be unspecified
