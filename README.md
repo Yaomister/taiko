@@ -1,5 +1,26 @@
 # taiko
 
+## Prerequisites
+
+Make sure you have the following installed:
+
+- Node.js (includes npm)
+- Python 3.8+
+- pip (Python package manager)
+- TypeScript compiler
+
+Install the TypeScript compiler globally with:
+
+```bash
+npm install -g typescript
+```
+
+And required Python packages with:
+
+```
+pip install -r requirements.txt
+```
+
 ## Data pipeline
 
 ### Overview
@@ -17,24 +38,13 @@ A more detailed explanation can be found [here](https://docs.google.com/document
 
 ### Usage
 
-#### 1. Install dependencies
-
-```bash
-cd data
-npm i
-pip install librosa
-pip install torch
-```
-
-Make sure you also have Node.js installed.
-
-#### 2. Drag your songs into the `tracks/` directory
+#### 1. Add your songs into `data/tracks/`
 
 - Various track sets can be found at [TJA Portal](https://tjaportal.neocities.org/).
 - Track folders can be nested, but just make sure that any folder that contains a `.tja` file also has an audio file.
 - Most audio types should be supported. See `data/src/spectrogram_utils.py` for supported audio types.
 
-#### 3. Run the dataset builder script
+#### 2. Run the dataset builder script
 
 Supported flags:
 
@@ -52,7 +62,7 @@ Example:
 ./data/src/build_dataset.sh -d easy -f my_dataset -n don,ka -b 50
 ```
 
-#### 4. Import .npz file for each batch
+#### 3. Import .npz file for each batch
 
 Example:
 
@@ -120,3 +130,7 @@ python model/inference.py \
 | `--title`     | No       | `"Untitled"` | Song title written into the TJA header                                                                               |
 | `--offset`    | No       | `0.0`        | Seconds of silence before the music starts in the audio file                                                         |
 | `--threshold` | No       | `0.5`        | Minimum model confidence to count as a note (0–1). Increase to reduce false positives, decrease to catch more notes. |
+
+```
+
+```
