@@ -51,9 +51,11 @@ class NoteType(str, Enum):
     Drumroll = "drumroll"
     BigDrumroll = "bigDrumroll"
     Balloon = "balloon"
+    Background = "background"
 
 
 NOTE_TYPE_TO_ID: Dict[str, int] = {
+    NoteType.Background.value: 0,
     NoteType.Don.value: 1,
     NoteType.Ka.value: 2,
     NoteType.BigDon.value: 3,
@@ -62,6 +64,8 @@ NOTE_TYPE_TO_ID: Dict[str, int] = {
     NoteType.BigDrumroll.value: 6,
     NoteType.Balloon.value: 7,
 }
+
+ID_TO_NOTE_TYPE = {v: k for k, v in NOTE_TYPE_TO_ID.items()}
 
 
 def _require_librosa() -> None:

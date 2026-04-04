@@ -45,10 +45,11 @@ import json
 import os
 from typing import List, Optional
 
-from .spectrogram_utils import NOTE_TYPE_TO_ID
+from .spectrogram_utils import NOTE_TYPE_TO_ID, ID_TO_NOTE_TYPE
 
 import numpy as np
 from math import ceil
+from collections import defaultdict, Counter
 
 from data.src.spectrogram_utils import (
     CONTEXT_FRAMES,
@@ -111,15 +112,17 @@ def preprocess_dataset(
     batch_sample_to_song: List[int] = []
     batch_song_names: List[str] = []
 
-    all_song_names: List[str] = []
-    class_ids = {t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types}
+    class_cnts = defaultdict(int) # Count of appearances per class in the dataset
+    class_ids = {NoteType.Background.value: 0, **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types}}
     n_samples, n_songs = 0, 0
 
     # Make output directory if it doesn't exist
     os.makedirs(out_path, exist_ok=True)
 
-    for song_id, folder in enumerate(tqdm(song_folders)):
+    pbar = tqdm(song_folders)
+    for song_id, folder in enumerate(pbar):
         base = os.path.basename(folder)
+
         try:
             audio_path = get_audio_from_folder(folder)
         except FileNotFoundError as e:
@@ -156,15 +159,23 @@ def preprocess_dataset(
                 song_names=batch_song_names,
             )
 
-            all_song_names.append(batch_song_names)
+            all_y = np.concatenate(batch_Y)  
+            class_cnts = dict(Counter(class_cnts) + Counter(all_y))
             # Reset all batch-related data
             batch_X, batch_Y, batch_sample_to_song, batch_song_names = [], [], [], []
+
+            # Display class distribution
+            total = sum(class_cnts.values())
+            dist = {ID_TO_NOTE_TYPE[int(k)]: f"{v/total:.2%}" for k, v in class_cnts.items()}
+            pbar.set_postfix(dist)
 
     # Save metadata
     metadata = {
         "n_samples": n_samples,
         "n_songs": n_songs,
         "batch_size": batch_size,
+        "classes": {str(v): k for k, v in class_ids.items()},
+        "class_counts": {ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()},
         "negative_ratio": cfg.negative_ratio,
         "seed": cfg.seed,
         "sample_rate": SAMPLE_RATE,
@@ -174,7 +185,6 @@ def preprocess_dataset(
         "per_window_context_frames": CONTEXT_FRAMES,
         "X_shape": "(N, 3, 15, 80)",
         "y_shape": "(N,) multi-class beat label at center frame (0=background)",
-        "classes": {"0": "background", **{str(v): k for k, v in class_ids.items()}},
     }
     with open(f"{out_path}/metadata.json", "w") as file:
         json.dump(metadata, file)
