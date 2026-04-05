@@ -90,7 +90,7 @@ Trains a CNN on the preprocessed `.npz` batch files produced by the data pipelin
 ```bash
 python model/training.py \
   --data_dir data/preprocessed/exports/my_dataset \
-  --out_dir models/my_model.pth
+  --out models/my_model.pth
 ```
 
 ### Arguments
@@ -98,7 +98,7 @@ python model/training.py \
 | Argument       | Required | Default | Description                                                  |
 | -------------- | -------- | ------- | ------------------------------------------------------------ |
 | `--data_dir`   | Yes      | —       | Directory containing `batch_*.npz` files and `metadata.json` |
-| `--out_dir`    | Yes      | —       | Path to save the trained model `.pth` file                   |
+| `--out`        | Yes      | —       | Path to save the trained model `.pth` file                   |
 | `--epochs`     | No       | `100`   | Number of training epochs                                    |
 | `--lr`         | No       | `0.001` | Learning rate                                                |
 | `--batch_size` | No       | `256`   | Mini-batch size                                              |

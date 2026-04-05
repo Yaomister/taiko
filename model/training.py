@@ -3,7 +3,7 @@ Training script for Taiko CNN note classifier. Loads preprocessed .npz batch fil
 
 Usage:
     --data_dir data/preprocessed/train_data \\
-    --out_dir models/my_model.pt \\
+    --out models/my_model.pt \\
     --epochs 100 \\
     --lr 0.001 \\
     --batch_size 256
@@ -12,7 +12,7 @@ Usage:
 Arguments:
     --data_dir (str): Directory containing batch_0.npz, batch_1.npz, ... and metadata.json (required)
 
-    --out_dir (str): Path to save the trained model weights (required)
+    --out (str): File path to save the trained model weights (required)
 
     --epochs (int): Number of training epochs. Default is 100
 
@@ -92,7 +92,7 @@ def plot_losses(train_losses: list[float], val_losses: list[float], out_path: st
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the CNN on preprocessed .npz data.")
     parser.add_argument("--data_dir", type=str, required=True, help="Directory with batch_*.npz files and metadata.json")
-    parser.add_argument("--out_dir", type=str, required=True, help="Path to save trained model weights (.pt)")
+    parser.add_argument("--out", type=str, required=True, help="File path to save trained model weights to")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch_size", type=int, default=256)
@@ -104,7 +104,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    os.makedirs(os.path.dirname(args.out_dir), exist_ok=True) # Create out path if it doesn't exist
+    os.makedirs(os.path.dirname(args.out), exist_ok=True) # Create out path if it doesn't exist
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -181,14 +181,14 @@ def main() -> None:
         "state_dict": model.state_dict(),
         "n_classes": n_classes,
         "args": vars(args),
-    }, args.out_dir)
-    print(f"Model saved to {args.out_dir}")
+    }, args.out)
+    print(f"Model saved to {args.out}")
 
     # Save loss plot
-    plot_path = args.out_dir.replace(".pt", "_loss.png")
+    model_name = os.path.splitext(args.out)[0]
+    plot_path = model_name + ".png"
     plot_losses(train_losses, val_losses, plot_path)
     print(f"Loss plot saved to {plot_path}")
-
 
 if __name__ == "__main__":
     main()
