@@ -124,6 +124,7 @@ def preprocess_dataset(
     class_cnts = Counter() # Count of appearances per class in the dataset
     class_ids = {NoteType.Background.value: 0, **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types}}
     n_samples, n_songs = 0, 0
+    batch_num = 0
 
     # Make output directory if it doesn't exist
     os.makedirs(out_path, exist_ok=True)
@@ -169,10 +170,9 @@ def preprocess_dataset(
         n_songs += 1
 
         # Batch on every nth song, and on the last song
-        if ((song_id + 1) % batch_size == 0) or song_id == len(song_folders) - 1:
-            batch_num = song_id // batch_size
+        if len(batch_song_names) >= batch_size or song_id == len(song_folders) - 1:
             if not batch_X:
-                raise RuntimeError("No training samples generated.")
+                continue
 
             # This clears batch_X and batch_Y, so print the class distribution before
             export_and_clear_batch(
@@ -183,11 +183,24 @@ def preprocess_dataset(
                 sample_to_song=batch_sample_to_song,
                 song_names=batch_song_names,
             )
+            batch_num += 1
 
             # Reset all batch-related data
             batch_sample_to_song.clear()
             batch_song_names.clear()
 
+    # Export any remaining samples (if the last song got skipped)
+    if batch_X:
+        export_and_clear_batch(
+            batch_num=batch_num,
+            batch_X=batch_X,
+            batch_Y=batch_Y,
+            out_path=out_path,
+            sample_to_song=batch_sample_to_song,
+            song_names=batch_song_names,
+        )
+        batch_sample_to_song.clear()
+        batch_song_names.clear()
 
     # Save metadata
     metadata = {

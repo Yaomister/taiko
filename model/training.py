@@ -104,6 +104,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    os.makedirs(os.path.dirname(args.out_dir), exist_ok=True) # Create out path if it doesn't exist
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
