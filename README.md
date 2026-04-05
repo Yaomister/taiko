@@ -21,6 +21,9 @@ And required Python packages with:
 pip install -r requirements.txt
 ```
 
+torch is included in `requirements.txt`, but depending on your system, you may want to install
+torch separately from pytorch.org with the right CUDA version for your system.
+
 ## Data pipeline
 
 ### Overview

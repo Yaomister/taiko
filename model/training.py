@@ -127,15 +127,7 @@ def main() -> None:
     # Build model
     model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
     optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
-    counts = meta.get("class_counts", {})
-    classes = meta.get("classes", {})
-    count_list = torch.tensor(
-        [counts[name] for name in sorted(classes, key=lambda k: int(k))],
-        dtype=torch.float32
-    )
-    weights = (1.0 / count_list)
-    weights = (weights / weights.sum()).to(device)
-    loss_function = nn.CrossEntropyLoss(weight=weights)
+    loss_function = nn.CrossEntropyLoss()
 
     train_losses, val_losses = [], []
 
