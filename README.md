@@ -58,11 +58,12 @@ Supported flags:
 | `-n` | Required | Note types (comma-separated, e.g. `don,ka`. See `data/src/spectrogram_utils.py` for supported note types.)     |
 | `-b` | Optional | Batch size; songs per dataset file (default: `50`)                                                             |
 | `-c` | Optional | Clears labels directory for the specified difficulty.                                                          |
+| `-r` | Optional | Ratio of negatives over positives (default: `0.5`).                                                            |
 
 Example:
 
 ```bash
-./data/src/build_dataset.sh -d easy -f my_dataset -n don,ka -b 50
+./data/src/build_dataset.sh -d easy -f my_dataset -n don,ka -b 50 -r 0.25
 ```
 
 #### 3. Import .npz file for each batch

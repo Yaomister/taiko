@@ -23,8 +23,9 @@
 #     -n: note types (comma-separated, e.g. don,ka).
 #
 #   Optional:
-#     -b: batch size; number of songs per dataset file. Default: 50 
+#     -b: batch size; number of songs per dataset file. Default: 50
 #     -c: clears labels/<difficulty>/ under preprocessed (or -o labels tree).
+#     -r: negative-to-positive sample ratio. Use -1 for all negatives. Default: 1.0
 
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,19 +46,21 @@ labels_dir_flag=''
 dataset_dir_flag=''
 note_types=''
 batch_size=''
+negative_ratio=''
 
 # Args handling
 print_usage() {
-    printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_dir> -n <note_types> [-l <labels_parent_dir>] [-b <batch_size>] [-c]\n" "$DATA_SRC"
+    printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_dir> -n <note_types> [-b <batch_size>] [-r <negative_ratio>] [-c]\n" "$DATA_SRC"
 }
 
-while getopts ":d:f:n:c:b:" flag; do
+while getopts ":d:f:n:c:b:r:" flag; do
   case "$flag" in
     c) clear_flag='true' ;;
     d) diff_flag="$OPTARG" ;;
     f) dataset_dir_flag="$OPTARG" ;;
     n) note_types="$OPTARG" ;;
     b) batch_size="$OPTARG" ;;
+    r) negative_ratio="$OPTARG" ;;
     :)
       echo "Option -$OPTARG requires an argument"
       exit 1 ;;
@@ -125,8 +128,12 @@ cmd=(
   --diff "$diff_flag"
 )
 
-if [[ -n "$batch_size" ]]; then # Batch size is optional, may be unspecified
+if [[ -n "$batch_size" ]]; then
   cmd+=(--batch_size "$batch_size")
+fi
+
+if [[ -n "$negative_ratio" ]]; then
+  cmd+=(--negative_ratio "$negative_ratio")
 fi
 
 PYTHONPATH="$REPO_ROOT" "${cmd[@]}"
