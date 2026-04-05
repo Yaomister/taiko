@@ -119,7 +119,7 @@ def main() -> None:
 
     # Collect batch files and count samples
     batch_files = sorted(glob.glob(os.path.join(args.data_dir, "batch_*.npz")))
-    n_samples = sum(len(np.load(p)["X"]) for p in batch_files)
+    n_samples = meta.get("n_samples")
     val_start = int(n_samples * (1 - args.split_prop))
     print(f"Loaded {n_samples:,} samples from {len(batch_files)} batch files")
     print(f"Train: {val_start:,} samples | Val: {n_samples - val_start:,} samples")
