@@ -81,7 +81,7 @@ def plot_losses(train_losses: list[float], val_losses: list[float], out_path: st
     plt.plot(epochs, train_losses, label="Train loss")
     plt.plot(epochs, val_losses, label="Val loss")
     plt.xlabel("Epoch")
-    plt.ylabel("Cross-entropy loss")
+    plt.ylabel("BCE loss")
     plt.title("Training and validation loss")
     plt.legend()
     plt.tight_layout()
