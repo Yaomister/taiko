@@ -116,7 +116,7 @@ def main() -> None:
     meta_path = os.path.join(args.data_dir, "metadata.json")
     with open(meta_path) as f:
         meta = json.load(f)
-    n_classes = len(meta.get("classes", {})) or 3
+    n_classes = len(meta.get("classes", {}))
 
     # Collect batch files and count samples
     batch_files = sorted(glob.glob(os.path.join(args.data_dir, "batch_*.npz")))
@@ -128,7 +128,17 @@ def main() -> None:
     # Build model
     model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
     optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
-    loss_function = nn.CrossEntropyLoss()
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer, mode="min", factor=0.7, patience=10, min_lr=1e-6
+    # )
+
+    # Weighted loss function
+    class_counts = meta["class_counts"]
+    id_to_type = meta["classes"]  # {"0": "background", "1": "don", ...}
+    ordered_counts = [class_counts[id_to_type[str(i)]] for i in range(n_classes)]
+    weights = 1.0 / torch.tensor(ordered_counts, dtype=torch.float32)
+    weights = weights / weights.sum()
+    loss_function = nn.CrossEntropyLoss(weight=weights.to(device))
 
     train_losses, val_losses = [], []
 
@@ -175,6 +185,8 @@ def main() -> None:
                 "val_loss": f"{val_loss:.4f}",
                 "val_acc": f"{val_acc:.1%}",
             })
+
+            # scheduler.step(val_loss)
 
     # Save model
     torch.save({
