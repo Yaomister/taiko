@@ -286,6 +286,7 @@ def extract_windows(
     rng: Optional[np.random.Generator] = None,
     negative_ratio: Optional[float] = 1.0,
     max_negatives: Optional[int] = None,
+    neg_exclude_mask: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build training samples: X (N, 3, 15, 80), y (N,) multi-class.
@@ -298,6 +299,10 @@ def extract_windows(
     Balancing: include every i with y[i]!=0 (any beat class); sample background
     frames (y==0) to match negative_ratio * num_pos (default 1:1). If
     negative_ratio is None, keep all background frames.
+
+    neg_exclude_mask: boolean array of shape (num_frames,). Frames where this is
+    True are never sampled as negatives, even if labels[i]==0. Use this to exclude
+    frames that belong to note types not in the requested class set.
     """
     if len(mel_specs) != 3:
         raise ValueError("mel_specs must contain 3 spectrograms (512, 1024, 2048).")
@@ -324,7 +329,10 @@ def extract_windows(
     valid = np.arange(i_lo, i_hi, dtype=np.int64)
     pos_mask = labels[valid] != 0
     pos_idx = valid[pos_mask]
-    neg_idx = valid[~pos_mask]
+    neg_mask = ~pos_mask
+    if neg_exclude_mask is not None:
+        neg_mask &= ~neg_exclude_mask[valid]
+    neg_idx = valid[neg_mask]
 
     rng = rng or np.random.default_rng()
 
@@ -421,11 +429,23 @@ def pipeline_from_audio(
         sample_rate=cfg.sample_rate,
         hop_size=cfg.hop_size,
     )
+    # Build a mask of all note frames across every note type so that frames
+    # belonging to unrequested types are never sampled as negatives.
+    all_class_ids = {k: v for k, v in NOTE_TYPE_TO_ID.items() if k != NoteType.Background.value}
+    all_labels = build_multiclass_labels(
+        notes,
+        nfr,
+        class_ids=all_class_ids,
+        sample_rate=cfg.sample_rate,
+        hop_size=cfg.hop_size,
+    )
+    neg_exclude_mask = all_labels != 0
     return extract_windows(
         mel_specs,
         labels,
         rng=rng,
         negative_ratio=cfg.negative_ratio,
+        neg_exclude_mask=neg_exclude_mask,
     )
 
 
