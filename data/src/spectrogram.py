@@ -51,7 +51,7 @@ from .spectrogram_utils import NOTE_TYPE_TO_ID, ID_TO_NOTE_TYPE
 
 import numpy as np
 from math import ceil
-from collections import defaultdict
+from collections import defaultdict, Counter
 import psutil, os
 
 from data.src.spectrogram_utils import (
@@ -121,7 +121,7 @@ def preprocess_dataset(
     batch_sample_to_song: List[int] = []
     batch_song_names: List[str] = []
 
-    class_cnts = defaultdict(int) # Count of appearances per class in the dataset
+    class_cnts = Counter() # Count of appearances per class in the dataset
     class_ids = {NoteType.Background.value: 0, **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types}}
     n_samples, n_songs = 0, 0
 
@@ -130,6 +130,9 @@ def preprocess_dataset(
 
     pbar = tqdm(song_folders)
     for song_id, folder in enumerate(pbar):
+        proc = psutil.Process(os.getpid())
+        pbar.set_description_str(f"Mem: {proc.memory_info().rss / 1e6:.1f} MB")
+
         base = os.path.basename(folder)
 
         try:
@@ -143,12 +146,20 @@ def preprocess_dataset(
             continue
 
         X, y = process_song(audio_path, json_path, cfg, rng, allowed_types)
-        proc = psutil.Process(os.getpid())
-        pbar.set_description_str(f"Mem: {proc.memory_info().rss / 1e6:.1f} MB")
-
         if X.shape[0] == 0:
             # print(f"No samples for {base}, skipping.")
             continue
+
+        # Print class distribution
+        unique, counts = np.unique(y, return_counts=True)
+        class_cnts.update(dict(zip(unique.astype(int), counts)))
+        total = sum(class_cnts.values())
+        dist = {
+            ID_TO_NOTE_TYPE[int(k)]: f"{v / total:.2%}"
+            for k, v in class_cnts.items()
+        }
+        pbar.set_postfix(dist)
+
         batch_X.append(X)
         batch_Y.append(y)
         batch_sample_to_song.extend([song_id] * X.shape[0])
@@ -162,15 +173,6 @@ def preprocess_dataset(
             batch_num = ceil(song_id / batch_size)
             if not batch_X:
                 raise RuntimeError("No training samples generated.")
-            
-            for arr in batch_Y:
-                for id in arr.flat:
-                    class_cnts[id] += 1
-
-            # Display class distribution
-            total = sum(class_cnts.values())
-            dist = {ID_TO_NOTE_TYPE[int(k)]: f"{v/total:.2%}" for k, v in class_cnts.items()}
-            pbar.set_postfix(dist)
 
             # This clears batch_X and batch_Y, so print the class distribution before
             export_and_clear_batch(
