@@ -51,7 +51,7 @@ def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss
         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
         optimizer.zero_grad()
         logits = model(X_batch)
-        loss = loss_function(logits, y_batch)
+        loss = loss_function(logits, (y_batch > 0).float().unsqueeze(1))
         loss.backward()
         optimizer.step()
         total_loss += loss.item() * len(X_batch)
@@ -66,10 +66,10 @@ def evaluate(model: CNN, loader: DataLoader, loss_function: nn.Module, device: t
         for X_batch, y_batch in loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             logits = model(X_batch)
-            preds = logits.argmax(dim=1)
-            loss = loss_function(logits, y_batch)
+            preds = (logits.squeeze(1) > 0).long()
+            loss = loss_function(logits, (y_batch > 0).float().unsqueeze(1))
             total_loss += loss.item() * len(X_batch)
-            correct += (preds == y_batch).sum().item()
+            correct += (preds == (y_batch > 0).long()).sum().item()
             total += len(X_batch)
     return total_loss / total, correct / total, total
 
@@ -126,19 +126,20 @@ def main() -> None:
     print(f"Train: {val_start:,} samples | Val: {n_samples - val_start:,} samples")
 
     # Build model
-    model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
+    model = CNN(in_degree=3, out_degree=1, dropout=args.dropout).to(device)
     optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     #     optimizer, mode="min", factor=0.7, patience=10, min_lr=1e-6
     # )
 
-    # Weighted loss function
+    # Weighted loss function (pos_weight = negatives / positives)
     class_counts = meta["class_counts"]
     id_to_type = meta["classes"]  # {"0": "background", "1": "don", ...}
     ordered_counts = [class_counts[id_to_type[str(i)]] for i in range(n_classes)]
-    weights = 1.0 / torch.tensor(ordered_counts, dtype=torch.float32)
-    weights = weights / weights.sum()
-    loss_function = nn.CrossEntropyLoss(weight=weights.to(device))
+    neg_count = ordered_counts[0]
+    pos_count = sum(ordered_counts[1:])
+    pos_weight = torch.tensor([neg_count / pos_count], dtype=torch.float32)
+    loss_function = nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device))
 
     train_losses, val_losses = [], []
 

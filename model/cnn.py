@@ -15,7 +15,7 @@ class CNN(nn.Module):
     Input: (batch, 3, 15, 80)  — 3-channel multi-resolution log-mel spectrogram
     Output: (batch, out_degree) - unormalized logits over note classes
     """
-    def __init__(self, in_degree: int = 3, out_degree: int = 3, dropout: float = 0.5):
+    def __init__(self, in_degree: int = 3, out_degree: int = 1, dropout: float = 0.5):
         super(CNN, self).__init__()
         # in the onset detection paper they're using rectangular kernels because we care more about changes over time than frequency
         self.conv1 = nn.Conv2d(in_channels=in_degree, out_channels=32, kernel_size=(7, 3))
@@ -73,11 +73,11 @@ class CNN(nn.Module):
             probs: probability distribution over the note types
             preds: predicted note for each sample
         """
-        # Runs inference and applies softmax/normalizes the values in the forward pass
+        # Runs inference and applies sigmoid to get binary probabilities
         self.eval()
         with torch.no_grad():
             logits = self.forward(x)
-            probs = torch.softmax(logits, dim=1)
-            preds = probs.argmax(dim=1)
+            probs = torch.sigmoid(logits).squeeze(1)
+            preds = (probs > 0.5).long()
         return probs, preds
     
