@@ -170,7 +170,7 @@ def preprocess_dataset(
 
         # Batch on every nth song, and on the last song
         if ((song_id + 1) % batch_size == 0) or song_id == len(song_folders) - 1:
-            batch_num = ceil(song_id / batch_size)
+            batch_num = song_id // batch_size
             if not batch_X:
                 raise RuntimeError("No training samples generated.")
 

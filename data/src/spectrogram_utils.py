@@ -328,15 +328,18 @@ def extract_windows(
 
     rng = rng or np.random.default_rng()
 
+    if len(pos_idx) == 0:
+        return np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32), np.zeros(
+            (0,), dtype=np.int64
+        )
+
     # TODO: right now, we're picking negatives randomly. Model may not be able to
     # classify for harder cases where it's given a frame that's close to an onset
     if negative_ratio is None:
         neg_pick = neg_idx
     else:
         n_pos = len(pos_idx)
-        target_neg = (
-            int(np.ceil(n_pos * float(negative_ratio))) if n_pos > 0 else len(neg_idx)
-        )
+        target_neg = int(np.ceil(n_pos * float(negative_ratio)))  
         if max_negatives is not None:
             target_neg = min(target_neg, max_negatives)
         if len(neg_idx) == 0:
@@ -359,7 +362,6 @@ def extract_windows(
         y[k] = labels[i]
 
     return X, y
-
 
 def notes_json_to_onset_times_sec(
     notes: List[dict],
