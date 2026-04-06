@@ -26,6 +26,8 @@ Arguments:
 
     --dropout (float): Dropout rate on fully connected layers. Default is 0.5
 
+    --patience (int): Early stopping patience in epochs. Default is 10
+
 """
 
 import os
@@ -127,6 +129,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=10,
+        help="Early stopping patience (epochs without val loss improvement). Default is 10",
+    )
     return parser.parse_args()
 
 
@@ -164,6 +172,9 @@ def main() -> None:
 
     loss_function = nn.BCEWithLogitsLoss()
     train_losses, val_losses = [], []
+    best_val_loss = float("inf")
+    best_state_dict = None
+    epochs_no_improve = 0
 
     with tqdm(range(1, args.epochs + 1), desc="Training", unit="epoch") as pbar:
         for epoch in pbar:
@@ -218,6 +229,15 @@ def main() -> None:
             train_losses.append(train_loss)
             val_losses.append(val_loss)
 
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state_dict = {
+                    k: v.cpu().clone() for k, v in model.state_dict().items()
+                }
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
             pbar.set_postfix(
                 {
                     "train_loss": f"{train_loss:.4f}",
@@ -226,7 +246,15 @@ def main() -> None:
                 }
             )
 
+            if epochs_no_improve >= args.patience:
+                print(
+                    f"\nEarly stopping at epoch {epoch} (no improvement for {args.patience} epochs)"
+                )
+                break
+
             # scheduler.step(val_loss)
+
+    model.load_state_dict(best_state_dict)
 
     # Save model
     torch.save(
