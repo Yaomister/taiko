@@ -287,6 +287,7 @@ def extract_windows(
     negative_ratio: Optional[float] = 1.0,
     max_negatives: Optional[int] = None,
     neg_exclude_mask: Optional[np.ndarray] = None,
+    hard_negative_radius: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build training samples: X (N, 3, 15, 80), y (N,) multi-class.
@@ -341,8 +342,16 @@ def extract_windows(
             (0,), dtype=np.int64
         )
 
-    # TODO: right now, we're picking negatives randomly. Model may not be able to
-    # classify for harder cases where it's given a frame that's close to an onset
+    # Prefer negatives within hard_negative_radius frames of any positive (harder cases,
+    # matching the learninggenerator2 approach from the onset detection paper)
+    if hard_negative_radius is not None and len(pos_idx) > 0:
+        near_mask = np.zeros(n_frames, dtype=bool)
+        for p in pos_idx:
+            near_mask[max(0, p - hard_negative_radius) : min(n_frames, p + hard_negative_radius + 1)] = True
+        near_neg_idx = neg_idx[near_mask[neg_idx]]
+        if len(near_neg_idx) > 0:
+            neg_idx = near_neg_idx
+
     if negative_ratio is None:
         neg_pick = neg_idx
     else:
@@ -401,6 +410,7 @@ class OnsetPipelineConfig:
     n_mels: int = N_MELS
     negative_ratio: Optional[float] = 1.0  # ~1:1 vs positives; None = all negatives
     seed: int = 0
+    hard_negative_radius: Optional[int] = 60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
 
 
 def pipeline_from_audio(
@@ -446,6 +456,7 @@ def pipeline_from_audio(
         rng=rng,
         negative_ratio=cfg.negative_ratio,
         neg_exclude_mask=neg_exclude_mask,
+        hard_negative_radius=cfg.hard_negative_radius,
     )
 
 

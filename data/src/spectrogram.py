@@ -242,6 +242,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=50)
+    parser.add_argument(
+        "--hard_negative_radius",
+        type=int,
+        default=60,
+        help="Sample negatives within this many frames of a note event (~0.7s at 44100/512). Set to -1 to disable.",
+    )
     allowed = [n.value for n in NoteType]
 
     parser.add_argument(
@@ -282,7 +288,8 @@ def main() -> None:
     else:
         neg_ratio = args.negative_ratio
 
-    cfg = OnsetPipelineConfig(negative_ratio=neg_ratio, seed=args.seed)
+    hard_neg_radius: Optional[int] = None if args.hard_negative_radius < 0 else args.hard_negative_radius
+    cfg = OnsetPipelineConfig(negative_ratio=neg_ratio, seed=args.seed, hard_negative_radius=hard_neg_radius)
     preprocess_dataset(
         audio_dir=args.audio_dir,
         json_dir=args.json_dir,
