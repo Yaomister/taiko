@@ -43,7 +43,13 @@ from typing import Tuple
 import glob
 
 
-def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss_function: nn.Module, device: torch.device) -> float:
+def train(
+    model: CNN,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    loss_function: nn.Module,
+    device: torch.device,
+) -> float:
     """Train one epoch, returns average loss."""
     model.train()
     total_loss = 0.0
@@ -58,7 +64,10 @@ def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss
     return total_loss / len(loader.dataset)
 
 
-def evaluate(model: CNN, loader: DataLoader, loss_function: nn.Module, device: torch.device) -> Tuple[float, float, int]:
+# TODO: change evaluation method to precision vs recall
+def evaluate(
+    model: CNN, loader: DataLoader, loss_function: nn.Module, device: torch.device
+) -> Tuple[float, float, int]:
     """Returns average loss, accuracy, and total sample count."""
     model.eval()
     total_loss, correct, total = 0.0, 0, 0
@@ -74,7 +83,9 @@ def evaluate(model: CNN, loader: DataLoader, loss_function: nn.Module, device: t
     return total_loss / total, correct / total, total
 
 
-def plot_losses(train_losses: list[float], val_losses: list[float], out_path: str) -> None:
+def plot_losses(
+    train_losses: list[float], val_losses: list[float], out_path: str
+) -> None:
     """Save a train/val loss curve to out_path."""
     epochs = range(1, len(train_losses) + 1)
     plt.figure(figsize=(8, 5))
@@ -90,13 +101,30 @@ def plot_losses(train_losses: list[float], val_losses: list[float], out_path: st
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train the CNN on preprocessed .npz data.")
-    parser.add_argument("--data_dir", type=str, required=True, help="Directory with batch_*.npz files and metadata.json")
-    parser.add_argument("--out", type=str, required=True, help="File path to save trained model weights to")
+    parser = argparse.ArgumentParser(
+        description="Train the CNN on preprocessed .npz data."
+    )
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        required=True,
+        help="Directory with batch_*.npz files and metadata.json",
+    )
+    parser.add_argument(
+        "--out",
+        type=str,
+        required=True,
+        help="File path to save trained model weights to",
+    )
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch_size", type=int, default=256)
-    parser.add_argument("--split_prop", type=float, default=0.1, help="Proportion of data reserved for validation")
+    parser.add_argument(
+        "--split_prop",
+        type=float,
+        default=0.1,
+        help="Proportion of data reserved for validation",
+    )
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=1)
     return parser.parse_args()
@@ -104,7 +132,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    os.makedirs(os.path.dirname(args.out), exist_ok=True) # Create out path if it doesn't exist
+    os.makedirs(
+        os.path.dirname(args.out), exist_ok=True
+    )  # Create out path if it doesn't exist
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -126,26 +156,24 @@ def main() -> None:
     print(f"Train: {val_start:,} samples | Val: {n_samples - val_start:,} samples")
 
     # Build model
-    model = CNN(in_degree=3, out_degree=1, dropout=args.dropout).to(device)
+    model = CNN(in_channels=3, dropout=args.dropout).to(device)
     optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     #     optimizer, mode="min", factor=0.7, patience=10, min_lr=1e-6
     # )
 
-    # Weighted loss function (pos_weight = negatives / positives)
-    class_counts = meta["class_counts"]
-    id_to_type = meta["classes"]  # {"0": "background", "1": "don", ...}
-    ordered_counts = [class_counts[id_to_type[str(i)]] for i in range(n_classes)]
-    neg_count = ordered_counts[0]
-    pos_count = sum(ordered_counts[1:])
-    pos_weight = torch.tensor([neg_count / pos_count], dtype=torch.float32)
-    loss_function = nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device))
-
+    loss_function = nn.BCEWithLogitsLoss()
     train_losses, val_losses = [], []
 
     with tqdm(range(1, args.epochs + 1), desc="Training", unit="epoch") as pbar:
         for epoch in pbar:
-            train_loss_sum, val_loss_sum, correct, total, train_total = 0.0, 0.0, 0, 0, 0
+            train_loss_sum, val_loss_sum, correct, total, train_total = (
+                0.0,
+                0.0,
+                0,
+                0,
+                0,
+            )
             samples_seen = 0
 
             for path in batch_files:
@@ -158,14 +186,23 @@ def main() -> None:
                 batch_val_start = batch_train_end
 
                 if batch_train_end > 0:
-                    loader = DataLoader(TensorDataset(X[:batch_train_end], y[:batch_train_end]),
-                                        batch_size=args.batch_size, shuffle=True)
-                    train_loss_sum += train(model, loader, optimizer, loss_function, device) * batch_train_end
+                    loader = DataLoader(
+                        TensorDataset(X[:batch_train_end], y[:batch_train_end]),
+                        batch_size=args.batch_size,
+                        shuffle=True,
+                    )
+                    train_loss_sum += (
+                        train(model, loader, optimizer, loss_function, device)
+                        * batch_train_end
+                    )
                     train_total += batch_train_end
 
                 if batch_val_start < n:
-                    loader = DataLoader(TensorDataset(X[batch_val_start:], y[batch_val_start:]),
-                                        batch_size=args.batch_size, shuffle=False)
+                    loader = DataLoader(
+                        TensorDataset(X[batch_val_start:], y[batch_val_start:]),
+                        batch_size=args.batch_size,
+                        shuffle=False,
+                    )
                     bl, bc, bt = evaluate(model, loader, loss_function, device)
                     val_loss_sum += bl * bt
                     correct += int(bc * bt)
@@ -181,20 +218,25 @@ def main() -> None:
             train_losses.append(train_loss)
             val_losses.append(val_loss)
 
-            pbar.set_postfix({
-                "train_loss": f"{train_loss:.4f}",
-                "val_loss": f"{val_loss:.4f}",
-                "val_acc": f"{val_acc:.1%}",
-            })
+            pbar.set_postfix(
+                {
+                    "train_loss": f"{train_loss:.4f}",
+                    "val_loss": f"{val_loss:.4f}",
+                    "val_acc": f"{val_acc:.1%}",
+                }
+            )
 
             # scheduler.step(val_loss)
 
     # Save model
-    torch.save({
-        "state_dict": model.state_dict(),
-        "n_classes": n_classes,
-        "args": vars(args),
-    }, args.out)
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "n_classes": n_classes,
+            "args": vars(args),
+        },
+        args.out,
+    )
     print(f"Model saved to {args.out}")
 
     # Save loss plot
@@ -202,6 +244,7 @@ def main() -> None:
     plot_path = model_name + ".png"
     plot_losses(train_losses, val_losses, plot_path)
     print(f"Loss plot saved to {plot_path}")
+
 
 if __name__ == "__main__":
     main()
