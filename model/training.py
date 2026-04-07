@@ -67,13 +67,17 @@ def train(
     return total_loss / len(loader.dataset)
 
 
-# TODO: change evaluation method to precision vs recall
 def evaluate(
     model: CNN, loader: DataLoader, loss_function: nn.Module, device: torch.device
-) -> Tuple[float, float, int]:
-    """Returns average loss, accuracy, and total sample count."""
+) -> Tuple[float, int, int, int, int]:
+    """Returns (average loss, TP, FP, FN, total samples).
+
+    TP (true positive):  predicted onset, actually an onset
+    FP (false positive): predicted onset, actually background
+    FN (false negative): predicted background, actually an onset
+    """
     model.eval()
-    total_loss, correct, total = 0.0, 0, 0
+    total_loss, tp, fp, fn, total = 0.0, 0, 0, 0, 0
     with torch.no_grad():
         for X_batch, y_batch in loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
@@ -83,9 +87,11 @@ def evaluate(
             loss = loss_function(logits, targets.unsqueeze(1))
             total_loss += loss.item() * len(X_batch)
             gt = (y_batch > 0.5).long() if y_batch.is_floating_point() else (y_batch > 0).long()
-            correct += (preds == gt).sum().item()
+            tp += (preds & gt).sum().item()
+            fp += (preds & ~gt.bool()).sum().item()
+            fn += (~preds.bool() & gt).sum().item()
             total += len(X_batch)
-    return total_loss / total, correct / total, total
+    return total_loss / total, tp, fp, fn, total
 
 
 def plot_losses(
@@ -181,13 +187,8 @@ def main() -> None:
 
     with tqdm(range(1, args.epochs + 1), desc="Training", unit="epoch") as pbar:
         for epoch in pbar:
-            train_loss_sum, val_loss_sum, correct, total, train_total = (
-                0.0,
-                0.0,
-                0,
-                0,
-                0,
-            )
+            train_loss_sum, val_loss_sum, train_total = 0.0, 0.0, 0
+            tp, fp, fn, total = 0, 0, 0, 0
             samples_seen = 0
 
             for path in batch_files:
@@ -217,9 +218,11 @@ def main() -> None:
                         batch_size=args.batch_size,
                         shuffle=False,
                     )
-                    bl, bc, bt = evaluate(model, loader, loss_function, device)
+                    bl, btp, bfp, bfn, bt = evaluate(model, loader, loss_function, device)
                     val_loss_sum += bl * bt
-                    correct += int(bc * bt)
+                    tp += btp
+                    fp += bfp
+                    fn += bfn
                     total += bt
 
                 samples_seen += n
@@ -227,7 +230,8 @@ def main() -> None:
 
             train_loss = train_loss_sum / train_total
             val_loss = val_loss_sum / total
-            val_acc = correct / total
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
 
             train_losses.append(train_loss)
             val_losses.append(val_loss)
@@ -245,7 +249,8 @@ def main() -> None:
                 {
                     "train_loss": f"{train_loss:.4f}",
                     "val_loss": f"{val_loss:.4f}",
-                    "val_acc": f"{val_acc:.1%}",
+                    "precision": f"{precision:.1%}",
+                    "recall": f"{recall:.1%}",
                 }
             )
 
