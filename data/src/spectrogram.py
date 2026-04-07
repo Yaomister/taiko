@@ -155,12 +155,16 @@ def preprocess_dataset(
             # print(f"No samples for {base}, skipping.")
             continue
 
-        # Print class distribution
-        unique, counts = np.unique(y, return_counts=True)
-        class_cnts.update(dict(zip(unique.astype(int), counts)))
+        # Print class distribution. Use binary onset/background counts since smoothing
+        # collapses all non-zero class IDs to 1.0 — ID_TO_NOTE_TYPE lookup would always
+        # return "don". Use class_ids (inverted) to get the real note type name instead.
+        id_to_name = {v: k for k, v in class_ids.items()}
+        hard_y = (y > 0.5).astype(np.int64) if y.dtype.kind == 'f' else y
+        unique, counts = np.unique(hard_y, return_counts=True)
+        class_cnts.update(dict(zip(unique.tolist(), counts.tolist())))
         total = sum(class_cnts.values())
         dist = {
-            ID_TO_NOTE_TYPE[int(k)]: f"{v / total:.2%}" for k, v in class_cnts.items()
+            id_to_name.get(int(k), str(k)): f"{v / total:.2%}" for k, v in class_cnts.items()
         }
         pbar.set_postfix(dist)
 
