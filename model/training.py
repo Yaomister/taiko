@@ -59,7 +59,8 @@ def train(
         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
         optimizer.zero_grad()
         logits = model(X_batch)
-        loss = loss_function(logits, (y_batch > 0).float().unsqueeze(1))
+        targets = y_batch.float() if y_batch.is_floating_point() else (y_batch > 0).float()
+        loss = loss_function(logits, targets.unsqueeze(1))
         loss.backward()
         optimizer.step()
         total_loss += loss.item() * len(X_batch)
@@ -78,9 +79,11 @@ def evaluate(
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             logits = model(X_batch)
             preds = (logits.squeeze(1) > 0).long()
-            loss = loss_function(logits, (y_batch > 0).float().unsqueeze(1))
+            targets = y_batch.float() if y_batch.is_floating_point() else (y_batch > 0).float()
+            loss = loss_function(logits, targets.unsqueeze(1))
             total_loss += loss.item() * len(X_batch)
-            correct += (preds == (y_batch > 0).long()).sum().item()
+            gt = (y_batch > 0.5).long() if y_batch.is_floating_point() else (y_batch > 0).long()
+            correct += (preds == gt).sum().item()
             total += len(X_batch)
     return total_loss / total, correct / total, total
 
@@ -190,7 +193,7 @@ def main() -> None:
             for path in batch_files:
                 data = np.load(path)
                 X = torch.from_numpy(data["X"].astype(np.float32))
-                y = torch.from_numpy(data["y"].astype(np.int64))
+                y = torch.from_numpy(data["y"])
                 n = len(X)
 
                 batch_train_end = max(0, min(n, val_start - samples_seen))

@@ -67,6 +67,7 @@ from data.src.spectrogram_utils import (
     process_song,
 )
 
+
 def export_and_clear_batch(
     batch_X: List[np.ndarray],
     batch_Y: List[np.ndarray],
@@ -80,7 +81,7 @@ def export_and_clear_batch(
     to save memory.
     """
     X_all = np.concatenate(batch_X, axis=0)
-    batch_X.clear() 
+    batch_X.clear()
     y_all = np.concatenate(batch_Y, axis=0)
     batch_Y.clear()
     song_index_arr = np.asarray(sample_to_song, dtype=np.int64)
@@ -121,8 +122,11 @@ def preprocess_dataset(
     batch_sample_to_song: List[int] = []
     batch_song_names: List[str] = []
 
-    class_cnts = Counter() # Count of appearances per class in the dataset
-    class_ids = {NoteType.Background.value: 0, **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types}}
+    class_cnts = Counter()  # Count of appearances per class in the dataset
+    class_ids = {
+        NoteType.Background.value: 0,
+        **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types},
+    }
     n_samples, n_songs = 0, 0
     batch_num = 0
 
@@ -156,8 +160,7 @@ def preprocess_dataset(
         class_cnts.update(dict(zip(unique.astype(int), counts)))
         total = sum(class_cnts.values())
         dist = {
-            ID_TO_NOTE_TYPE[int(k)]: f"{v / total:.2%}"
-            for k, v in class_cnts.items()
+            ID_TO_NOTE_TYPE[int(k)]: f"{v / total:.2%}" for k, v in class_cnts.items()
         }
         pbar.set_postfix(dist)
 
@@ -209,7 +212,9 @@ def preprocess_dataset(
         "batch_size": batch_size,
         "diff": diff,
         "classes": {str(v): k for k, v in class_ids.items()},
-        "class_counts": {ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()},
+        "class_counts": {
+            ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()
+        },
         "negative_ratio": cfg.negative_ratio,
         "seed": cfg.seed,
         "sample_rate": SAMPLE_RATE,
@@ -266,6 +271,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         type=str,
     )
+    parser.add_argument(
+        "--no_smooth_labels",
+        action="store_true",
+        help="Disable label smoothing. Smoothing is on by default.",
+    )
     return parser.parse_args()
 
 
@@ -288,8 +298,15 @@ def main() -> None:
     else:
         neg_ratio = args.negative_ratio
 
-    hard_neg_radius: Optional[int] = None if args.hard_negative_radius < 0 else args.hard_negative_radius
-    cfg = OnsetPipelineConfig(negative_ratio=neg_ratio, seed=args.seed, hard_negative_radius=hard_neg_radius)
+    hard_neg_radius: Optional[int] = (
+        None if args.hard_negative_radius < 0 else args.hard_negative_radius
+    )
+    cfg = OnsetPipelineConfig(
+        negative_ratio=neg_ratio,
+        seed=args.seed,
+        hard_negative_radius=hard_neg_radius,
+        smooth_labels=not args.no_smooth_labels,
+    )
     preprocess_dataset(
         audio_dir=args.audio_dir,
         json_dir=args.json_dir,
