@@ -36,6 +36,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+from torchmetrics.classification import MulticlassROC
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from cnn import CNN
@@ -176,6 +177,8 @@ def main() -> None:
                 "val_acc": f"{val_acc:.1%}",
             })
 
+
+
     # Save model
     torch.save({
         "state_dict": model.state_dict(),
@@ -190,5 +193,34 @@ def main() -> None:
     plot_losses(train_losses, val_losses, plot_path)
     print(f"Loss plot saved to {plot_path}")
 
+    
+    print("Computing ROC curve...")
+    roc = MulticlassROC(num_classes=n_classes)
+    auroc = MulticlassAUROC(num_classes=n_classes, average='macro')
+    model.eval()
+    samples_seen = 0
+
+    for path in batch_files:
+        data = np.load(path)
+        X = torch.from_numpy(data["X"].astype(np.float32))
+        y = torch.from_numpy(data["y"].astype(np.int64))
+        n = len(X)
+        batch_val_start = max(0, min(n, val_start - samples_seen))
+        if batch_val_start < n:
+            with torch.no_grad():
+                logits = model(X[batch_val_start:].to(device)).cpu()
+            roc.update(logits, y[batch_val_start:])
+            auroc.update(logits, y[batch_val_start:])
+        samples_seen += n
+        del X, y, data
+
+    print(f"AUROC: {auroc.compute():.4f}")
+    fig, ax = roc.plot()
+    roc_path = os.path.splitext(args.out)[0] + "_roc.png"
+    fig.savefig(roc_path)
+    plt.close(fig)
+    print(f"ROC curve saved to {roc_path}")
+
+    
 if __name__ == "__main__":
     main()
