@@ -4,3 +4,4 @@ data/src/__pycache__
 data/preprocessed
 data/tracks
 .vscode/
+model/__pycache__
