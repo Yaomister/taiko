@@ -216,6 +216,12 @@ def main() -> None:
 
     print(f"AUROC: {auroc.compute():.4f}")
     fig, ax = roc.plot()
+    class_names = {0: "background", 1: "don", 2: "ka", 3: "bigDon", 4: "bigKa", 5: "drumroll", 6: "bigDrumroll", 7: "balloon"}
+    for line in ax.get_lines():
+        label = line.get_label()
+        if label.isdigit():
+            line.set_label(class_names.get(int(label), label))
+    ax.legend()
     roc_path = os.path.splitext(args.out)[0] + "_roc.png"
     fig.savefig(roc_path)
     plt.close(fig)
