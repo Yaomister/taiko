@@ -1,0 +1,7 @@
+Using device: cuda
+Loaded 93,812 samples from 6 batch files
+Train: 84,430 samples | Val: 9,382 samples
+
+Early stopping at epoch 26 (no improvement for 10 epochs)
+Model saved to binary/bigdon.pth
+Loss plot saved to binary/bigdon.png

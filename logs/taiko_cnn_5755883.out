@@ -1,0 +1,3 @@
+Using device: cuda
+Loaded 93,812 samples from 6 batch files
+Train: 84,430 samples | Val: 9,382 samples
