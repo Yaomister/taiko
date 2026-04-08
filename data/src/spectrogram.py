@@ -47,17 +47,16 @@ import json
 import os
 from typing import List, Optional
 
-from .spectrogram_utils import NOTE_TYPE_TO_ID, ID_TO_NOTE_TYPE
-
 import numpy as np
-from math import ceil
-from collections import defaultdict, Counter
-import psutil, os
+from collections import Counter
+import psutil
 
 from data.src.spectrogram_utils import (
     CONTEXT_FRAMES,
     HOP_SIZE,
+    ID_TO_NOTE_TYPE,
     N_MELS,
+    NOTE_TYPE_TO_ID,
     NoteType,
     OnsetPipelineConfig,
     SAMPLE_RATE,
@@ -73,8 +72,6 @@ def export_and_clear_batch(
     batch_Y: List[np.ndarray],
     batch_num: int,
     out_path: str,
-    sample_to_song: List[int],
-    song_names: List[str],
 ):
     """
     Exports a batch to a given output path. Note that this function clears batch_X and batch_Y
@@ -84,7 +81,6 @@ def export_and_clear_batch(
     batch_X.clear()
     y_all = np.concatenate(batch_Y, axis=0)
     batch_Y.clear()
-    song_index_arr = np.asarray(sample_to_song, dtype=np.int64)
 
     # Export batch to .npz
     file_path = f"{out_path}/batch_{batch_num}"
@@ -92,12 +88,7 @@ def export_and_clear_batch(
         file=file_path,
         X=X_all,
         y=y_all,
-        sample_to_song=song_index_arr,  # Global sample index to song index in song_names
-        song_names=song_names,
     )
-    # print(
-    #     f"Saved batch {batch_num} to {file_path}, X={X_all.shape} y={y_all.shape} songs={len(song_names)}"
-    # )
 
 
 def preprocess_dataset(
@@ -119,8 +110,7 @@ def preprocess_dataset(
     batch_X: List[np.ndarray] = []
     # y shape: int64 (N,), (beat classes)
     batch_Y: List[np.ndarray] = []
-    batch_sample_to_song: List[int] = []
-    batch_song_names: List[str] = []
+    batch_n_songs = 0
 
     class_cnts = Counter()  # Count of appearances per class in the dataset
     class_ids = {
@@ -155,46 +145,39 @@ def preprocess_dataset(
             # print(f"No samples for {base}, skipping.")
             continue
 
-        # Print class distribution. Use binary onset/background counts since smoothing
-        # collapses all non-zero class IDs to 1.0 — ID_TO_NOTE_TYPE lookup would always
-        # return "don". Use class_ids (inverted) to get the real note type name instead.
+        # Print class distribution. When smooth_labels is on, recover hard labels from
+        # the integer class_ids mapping by rounding, so the display shows real note types.
         id_to_name = {v: k for k, v in class_ids.items()}
-        hard_y = (y > 0.5).astype(np.int64) if y.dtype.kind == 'f' else y
+        hard_y = np.round(y).astype(np.int64) if y.dtype.kind == "f" else y
         unique, counts = np.unique(hard_y, return_counts=True)
         class_cnts.update(dict(zip(unique.tolist(), counts.tolist())))
         total = sum(class_cnts.values())
         dist = {
-            id_to_name.get(int(k), str(k)): f"{v / total:.2%}" for k, v in class_cnts.items()
+            id_to_name.get(int(k), str(k)): f"{v / total:.2%}"
+            for k, v in class_cnts.items()
         }
         pbar.set_postfix(dist)
 
         batch_X.append(X)
         batch_Y.append(y)
-        batch_sample_to_song.extend([song_id] * X.shape[0])
-        batch_song_names.append(base)
+        batch_n_songs += 1
 
         n_samples += X.shape[0]
         n_songs += 1
 
         # Batch on every nth song, and on the last song
-        if len(batch_song_names) >= batch_size or song_id == len(song_folders) - 1:
+        if batch_n_songs >= batch_size or song_id == len(song_folders) - 1:
             if not batch_X:
                 continue
 
-            # This clears batch_X and batch_Y, so print the class distribution before
             export_and_clear_batch(
                 batch_num=batch_num,
                 batch_X=batch_X,
                 batch_Y=batch_Y,
                 out_path=out_path,
-                sample_to_song=batch_sample_to_song,
-                song_names=batch_song_names,
             )
             batch_num += 1
-
-            # Reset all batch-related data
-            batch_sample_to_song.clear()
-            batch_song_names.clear()
+            batch_n_songs = 0
 
     # Export any remaining samples (if the last song got skipped)
     if batch_X:
@@ -203,11 +186,7 @@ def preprocess_dataset(
             batch_X=batch_X,
             batch_Y=batch_Y,
             out_path=out_path,
-            sample_to_song=batch_sample_to_song,
-            song_names=batch_song_names,
         )
-        batch_sample_to_song.clear()
-        batch_song_names.clear()
 
     # Save metadata
     metadata = {

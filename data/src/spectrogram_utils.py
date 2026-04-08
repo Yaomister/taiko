@@ -367,7 +367,11 @@ def extract_windows(
     if hard_negative_radius is not None and len(pos_idx) > 0:
         near_mask = np.zeros(n_frames, dtype=bool)
         for p in pos_idx:
-            near_mask[max(0, p - hard_negative_radius) : min(n_frames, p + hard_negative_radius + 1)] = True
+            near_mask[
+                max(0, p - hard_negative_radius) : min(
+                    n_frames, p + hard_negative_radius + 1
+                )
+            ] = True
         near_neg_idx = neg_idx[near_mask[neg_idx]]
         if len(near_neg_idx) > 0:
             neg_idx = near_neg_idx
@@ -376,7 +380,7 @@ def extract_windows(
         neg_pick = neg_idx
     else:
         n_pos = len(pos_idx)
-        target_neg = int(np.ceil(n_pos * float(negative_ratio)))  
+        target_neg = int(np.ceil(n_pos * float(negative_ratio)))
         if max_negatives is not None:
             target_neg = min(target_neg, max_negatives)
         if len(neg_idx) == 0:
@@ -400,6 +404,7 @@ def extract_windows(
         y[k] = soft[i] if soft is not None else labels[i]
 
     return X, y
+
 
 def notes_json_to_onset_times_sec(
     notes: List[dict],
@@ -431,7 +436,9 @@ class OnsetPipelineConfig:
     n_mels: int = N_MELS
     negative_ratio: Optional[float] = 1.0  # ~1:1 vs positives; None = all negatives
     seed: int = 0
-    hard_negative_radius: Optional[int] = 60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
+    hard_negative_radius: Optional[int] = (
+        60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
+    )
     smooth_labels: bool = False  # if True, apply milden(): onset=1.0, ±1 frame=0.25
 
 
@@ -463,7 +470,9 @@ def pipeline_from_audio(
     )
     # Build a mask of all note frames across every note type so that frames
     # belonging to unrequested types are never sampled as negatives.
-    all_class_ids = {k: v for k, v in NOTE_TYPE_TO_ID.items() if k != NoteType.Background.value}
+    all_class_ids = {
+        k: v for k, v in NOTE_TYPE_TO_ID.items() if k != NoteType.Background.value
+    }
     all_labels = build_multiclass_labels(
         notes,
         nfr,
@@ -503,7 +512,8 @@ if torch is not None:
                     f"X must be (N, 3, {CONTEXT_FRAMES}, {N_MELS}), got {X.shape}"
                 )
             self.X = torch.from_numpy(np.asarray(X, dtype=np.float32))
-            self.y = torch.from_numpy(np.asarray(y, dtype=np.int64))
+            y_dtype = np.float32 if np.issubdtype(np.asarray(y).dtype, np.floating) else np.int64
+            self.y = torch.from_numpy(np.asarray(y, dtype=y_dtype))
 
         def __len__(self) -> int:
             return self.X.shape[0]
