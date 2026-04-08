@@ -194,6 +194,7 @@ def preprocess_dataset(
         "n_songs": n_songs,
         "batch_size": batch_size,
         "diff": diff,
+        "smooth_labels": cfg.smooth_labels,
         "classes": {str(v): k for k, v in class_ids.items()},
         "class_counts": {
             ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()
@@ -206,7 +207,7 @@ def preprocess_dataset(
         "n_mels": N_MELS,
         "per_window_context_frames": CONTEXT_FRAMES,
         "X_shape": "(N, 3, 15, 80)",
-        "y_shape": "(N,) multi-class beat label at center frame (0=background)",
+        "y_shape": "(N,) beat label at center frame (0=background)",
     }
     with open(f"{out_path}/metadata.json", "w") as file:
         json.dump(metadata, file)
