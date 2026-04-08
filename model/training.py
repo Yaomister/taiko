@@ -26,6 +26,8 @@ Arguments:
 
     --dropout (float): Dropout rate on fully connected layers. Default is 0.5
 
+    --patience (int): Early stopping patience in epochs. Default is 10
+
 """
 
 import os
@@ -44,7 +46,13 @@ from typing import Tuple
 import glob
 
 
-def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss_function: nn.Module, device: torch.device) -> float:
+def train(
+    model: CNN,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    loss_function: nn.Module,
+    device: torch.device,
+) -> float:
     """Train one epoch, returns average loss."""
     model.train()
     total_loss = 0.0
@@ -52,37 +60,51 @@ def train(model: CNN, loader: DataLoader, optimizer: torch.optim.Optimizer, loss
         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
         optimizer.zero_grad()
         logits = model(X_batch)
-        loss = loss_function(logits, y_batch)
+        targets = y_batch.float() if y_batch.is_floating_point() else (y_batch > 0).float()
+        loss = loss_function(logits, targets.unsqueeze(1))
         loss.backward()
         optimizer.step()
         total_loss += loss.item() * len(X_batch)
     return total_loss / len(loader.dataset)
 
 
-def evaluate(model: CNN, loader: DataLoader, loss_function: nn.Module, device: torch.device) -> Tuple[float, float, int]:
-    """Returns average loss, accuracy, and total sample count."""
+def evaluate(
+    model: CNN, loader: DataLoader, loss_function: nn.Module, device: torch.device
+) -> Tuple[float, int, int, int, int]:
+    """Returns (average loss, TP, FP, FN, total samples).
+
+    TP (true positive):  predicted onset, actually an onset
+    FP (false positive): predicted onset, actually background
+    FN (false negative): predicted background, actually an onset
+    """
     model.eval()
-    total_loss, correct, total = 0.0, 0, 0
+    total_loss, tp, fp, fn, total = 0.0, 0, 0, 0, 0
     with torch.no_grad():
         for X_batch, y_batch in loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             logits = model(X_batch)
-            preds = logits.argmax(dim=1)
-            loss = loss_function(logits, y_batch)
+            preds = (logits.squeeze(1) > 0).long()
+            targets = y_batch.float() if y_batch.is_floating_point() else (y_batch > 0).float()
+            loss = loss_function(logits, targets.unsqueeze(1))
             total_loss += loss.item() * len(X_batch)
-            correct += (preds == y_batch).sum().item()
+            gt = (y_batch > 0.5).long() if y_batch.is_floating_point() else (y_batch > 0).long()
+            tp += (preds & gt).sum().item()
+            fp += (preds & ~gt.bool()).sum().item()
+            fn += (~preds.bool() & gt).sum().item()
             total += len(X_batch)
-    return total_loss / total, correct / total, total
+    return total_loss / total, tp, fp, fn, total
 
 
-def plot_losses(train_losses: list[float], val_losses: list[float], out_path: str) -> None:
+def plot_losses(
+    train_losses: list[float], val_losses: list[float], out_path: str
+) -> None:
     """Save a train/val loss curve to out_path."""
     epochs = range(1, len(train_losses) + 1)
     plt.figure(figsize=(8, 5))
     plt.plot(epochs, train_losses, label="Train loss")
     plt.plot(epochs, val_losses, label="Val loss")
     plt.xlabel("Epoch")
-    plt.ylabel("Cross-entropy loss")
+    plt.ylabel("BCE loss")
     plt.title("Training and validation loss")
     plt.legend()
     plt.tight_layout()
@@ -91,21 +113,46 @@ def plot_losses(train_losses: list[float], val_losses: list[float], out_path: st
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train the CNN on preprocessed .npz data.")
-    parser.add_argument("--data_dir", type=str, required=True, help="Directory with batch_*.npz files and metadata.json")
-    parser.add_argument("--out", type=str, required=True, help="File path to save trained model weights to")
+    parser = argparse.ArgumentParser(
+        description="Train the CNN on preprocessed .npz data."
+    )
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        required=True,
+        help="Directory with batch_*.npz files and metadata.json",
+    )
+    parser.add_argument(
+        "--out",
+        type=str,
+        required=True,
+        help="File path to save trained model weights to",
+    )
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch_size", type=int, default=256)
-    parser.add_argument("--split_prop", type=float, default=0.1, help="Proportion of data reserved for validation")
+    parser.add_argument(
+        "--split_prop",
+        type=float,
+        default=0.1,
+        help="Proportion of data reserved for validation",
+    )
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=10,
+        help="Early stopping patience (epochs without val loss improvement). Default is 10",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    os.makedirs(os.path.dirname(args.out), exist_ok=True) # Create out path if it doesn't exist
+    os.makedirs(
+        os.path.dirname(args.out), exist_ok=True
+    )  # Create out path if it doesn't exist
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -117,7 +164,7 @@ def main() -> None:
     meta_path = os.path.join(args.data_dir, "metadata.json")
     with open(meta_path) as f:
         meta = json.load(f)
-    n_classes = len(meta.get("classes", {})) or 3
+    n_classes = len(meta.get("classes", {}))
 
     # Collect batch files and count samples
     batch_files = sorted(glob.glob(os.path.join(args.data_dir, "batch_*.npz")))
@@ -127,38 +174,56 @@ def main() -> None:
     print(f"Train: {val_start:,} samples | Val: {n_samples - val_start:,} samples")
 
     # Build model
-    model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
+    model = CNN(in_channels=3, dropout=args.dropout).to(device)
     optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
-    loss_function = nn.CrossEntropyLoss()
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer, mode="min", factor=0.7, patience=10, min_lr=1e-6
+    # )
 
+    loss_function = nn.BCEWithLogitsLoss()
     train_losses, val_losses = [], []
+    best_val_loss = float("inf")
+    best_state_dict = None
+    epochs_no_improve = 0
 
     with tqdm(range(1, args.epochs + 1), desc="Training", unit="epoch") as pbar:
         for epoch in pbar:
-            train_loss_sum, val_loss_sum, correct, total, train_total = 0.0, 0.0, 0, 0, 0
+            train_loss_sum, val_loss_sum, train_total = 0.0, 0.0, 0
+            tp, fp, fn, total = 0, 0, 0, 0
             samples_seen = 0
 
             for path in batch_files:
                 data = np.load(path)
                 X = torch.from_numpy(data["X"].astype(np.float32))
-                y = torch.from_numpy(data["y"].astype(np.int64))
+                y = torch.from_numpy(data["y"])
                 n = len(X)
 
                 batch_train_end = max(0, min(n, val_start - samples_seen))
                 batch_val_start = batch_train_end
 
                 if batch_train_end > 0:
-                    loader = DataLoader(TensorDataset(X[:batch_train_end], y[:batch_train_end]),
-                                        batch_size=args.batch_size, shuffle=True)
-                    train_loss_sum += train(model, loader, optimizer, loss_function, device) * batch_train_end
+                    loader = DataLoader(
+                        TensorDataset(X[:batch_train_end], y[:batch_train_end]),
+                        batch_size=args.batch_size,
+                        shuffle=True,
+                    )
+                    train_loss_sum += (
+                        train(model, loader, optimizer, loss_function, device)
+                        * batch_train_end
+                    )
                     train_total += batch_train_end
 
                 if batch_val_start < n:
-                    loader = DataLoader(TensorDataset(X[batch_val_start:], y[batch_val_start:]),
-                                        batch_size=args.batch_size, shuffle=False)
-                    bl, bc, bt = evaluate(model, loader, loss_function, device)
+                    loader = DataLoader(
+                        TensorDataset(X[batch_val_start:], y[batch_val_start:]),
+                        batch_size=args.batch_size,
+                        shuffle=False,
+                    )
+                    bl, btp, bfp, bfn, bt = evaluate(model, loader, loss_function, device)
                     val_loss_sum += bl * bt
-                    correct += int(bc * bt)
+                    tp += btp
+                    fp += bfp
+                    fn += bfn
                     total += bt
 
                 samples_seen += n
@@ -166,25 +231,51 @@ def main() -> None:
 
             train_loss = train_loss_sum / train_total
             val_loss = val_loss_sum / total
-            val_acc = correct / total
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
 
             train_losses.append(train_loss)
             val_losses.append(val_loss)
 
-            pbar.set_postfix({
-                "train_loss": f"{train_loss:.4f}",
-                "val_loss": f"{val_loss:.4f}",
-                "val_acc": f"{val_acc:.1%}",
-            })
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state_dict = {
+                    k: v.cpu().clone() for k, v in model.state_dict().items()
+                }
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
+            pbar.set_postfix(
+                {
+                    "train_loss": f"{train_loss:.4f}",
+                    "val_loss": f"{val_loss:.4f}",
+                    "precision": f"{precision:.1%}",
+                    "recall": f"{recall:.1%}",
+                }
+            )
+
+            if epochs_no_improve >= args.patience:
+                print(
+                    f"\nEarly stopping at epoch {epoch} (no improvement for {args.patience} epochs)"
+                )
+                break
+
+            # scheduler.step(val_loss)
+
+    model.load_state_dict(best_state_dict)
 
 
 
     # Save model
-    torch.save({
-        "state_dict": model.state_dict(),
-        "n_classes": n_classes,
-        "args": vars(args),
-    }, args.out)
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "n_classes": n_classes,
+            "args": vars(args),
+        },
+        args.out,
+    )
     print(f"Model saved to {args.out}")
 
     # Save loss plot
@@ -193,7 +284,6 @@ def main() -> None:
     plot_losses(train_losses, val_losses, plot_path)
     print(f"Loss plot saved to {plot_path}")
 
-    
     print("Computing ROC curve...")
     roc = MulticlassROC(num_classes=n_classes)
     auroc = MulticlassAUROC(num_classes=n_classes, average='macro')
@@ -227,6 +317,6 @@ def main() -> None:
     plt.close(fig)
     print(f"ROC curve saved to {roc_path}")
 
-    
+
 if __name__ == "__main__":
     main()

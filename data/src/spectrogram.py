@@ -67,6 +67,7 @@ from data.src.spectrogram_utils import (
     process_song,
 )
 
+
 def export_and_clear_batch(
     batch_X: List[np.ndarray],
     batch_Y: List[np.ndarray],
@@ -80,7 +81,7 @@ def export_and_clear_batch(
     to save memory.
     """
     X_all = np.concatenate(batch_X, axis=0)
-    batch_X.clear() 
+    batch_X.clear()
     y_all = np.concatenate(batch_Y, axis=0)
     batch_Y.clear()
     song_index_arr = np.asarray(sample_to_song, dtype=np.int64)
@@ -121,8 +122,11 @@ def preprocess_dataset(
     batch_sample_to_song: List[int] = []
     batch_song_names: List[str] = []
 
-    class_cnts = Counter() # Count of appearances per class in the dataset
-    class_ids = {NoteType.Background.value: 0, **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types}}
+    class_cnts = Counter()  # Count of appearances per class in the dataset
+    class_ids = {
+        NoteType.Background.value: 0,
+        **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types},
+    }
     n_samples, n_songs = 0, 0
     batch_num = 0
 
@@ -151,13 +155,16 @@ def preprocess_dataset(
             # print(f"No samples for {base}, skipping.")
             continue
 
-        # Print class distribution
-        unique, counts = np.unique(y, return_counts=True)
-        class_cnts.update(dict(zip(unique.astype(int), counts)))
+        # Print class distribution. Use binary onset/background counts since smoothing
+        # collapses all non-zero class IDs to 1.0 — ID_TO_NOTE_TYPE lookup would always
+        # return "don". Use class_ids (inverted) to get the real note type name instead.
+        id_to_name = {v: k for k, v in class_ids.items()}
+        hard_y = (y > 0.5).astype(np.int64) if y.dtype.kind == 'f' else y
+        unique, counts = np.unique(hard_y, return_counts=True)
+        class_cnts.update(dict(zip(unique.tolist(), counts.tolist())))
         total = sum(class_cnts.values())
         dist = {
-            ID_TO_NOTE_TYPE[int(k)]: f"{v / total:.2%}"
-            for k, v in class_cnts.items()
+            id_to_name.get(int(k), str(k)): f"{v / total:.2%}" for k, v in class_cnts.items()
         }
         pbar.set_postfix(dist)
 
@@ -209,7 +216,9 @@ def preprocess_dataset(
         "batch_size": batch_size,
         "diff": diff,
         "classes": {str(v): k for k, v in class_ids.items()},
-        "class_counts": {ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()},
+        "class_counts": {
+            ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()
+        },
         "negative_ratio": cfg.negative_ratio,
         "seed": cfg.seed,
         "sample_rate": SAMPLE_RATE,
@@ -242,6 +251,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=50)
+    parser.add_argument(
+        "--hard_negative_radius",
+        type=int,
+        default=60,
+        help="Sample negatives within this many frames of a note event (~0.7s at 44100/512). Set to -1 to disable.",
+    )
     allowed = [n.value for n in NoteType]
 
     parser.add_argument(
@@ -259,6 +274,11 @@ def parse_args() -> argparse.Namespace:
         "--json_dir",
         required=True,
         type=str,
+    )
+    parser.add_argument(
+        "--no_smooth_labels",
+        action="store_true",
+        help="Disable label smoothing. Smoothing is on by default.",
     )
     return parser.parse_args()
 
@@ -282,7 +302,15 @@ def main() -> None:
     else:
         neg_ratio = args.negative_ratio
 
-    cfg = OnsetPipelineConfig(negative_ratio=neg_ratio, seed=args.seed)
+    hard_neg_radius: Optional[int] = (
+        None if args.hard_negative_radius < 0 else args.hard_negative_radius
+    )
+    cfg = OnsetPipelineConfig(
+        negative_ratio=neg_ratio,
+        seed=args.seed,
+        hard_negative_radius=hard_neg_radius,
+        smooth_labels=not args.no_smooth_labels,
+    )
     preprocess_dataset(
         audio_dir=args.audio_dir,
         json_dir=args.json_dir,

@@ -279,6 +279,21 @@ def build_multiclass_labels(
     return labels
 
 
+def milden(labels: np.ndarray) -> np.ndarray:
+    """
+    Convert hard integer labels to soft float targets (mirrors the reference project).
+    Onset frames (labels != 0) stay at 1.0; immediately adjacent frames get 0.25
+    unless they are themselves onset frames (np.maximum preserves the higher value).
+    """
+    soft = (labels != 0).astype(np.float32)
+    for f in np.where(labels != 0)[0]:
+        if f > 0:
+            np.maximum(soft[f - 1 : f], 0.25, out=soft[f - 1 : f])
+        if f < len(labels) - 1:
+            np.maximum(soft[f + 1 : f + 2], 0.25, out=soft[f + 1 : f + 2])
+    return soft
+
+
 def extract_windows(
     mel_specs: Sequence[np.ndarray],
     labels: np.ndarray,
@@ -287,6 +302,8 @@ def extract_windows(
     negative_ratio: Optional[float] = 1.0,
     max_negatives: Optional[int] = None,
     neg_exclude_mask: Optional[np.ndarray] = None,
+    hard_negative_radius: Optional[int] = None,
+    smooth_labels: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build training samples: X (N, 3, 15, 80), y (N,) multi-class.
@@ -303,6 +320,9 @@ def extract_windows(
     neg_exclude_mask: boolean array of shape (num_frames,). Frames where this is
     True are never sampled as negatives, even if labels[i]==0. Use this to exclude
     frames that belong to note types not in the requested class set.
+
+    smooth_labels: if True, apply milden() so y is float32 with soft targets
+    (1.0 at onset, 0.25 at ±1 frame). Sampling decisions still use hard labels.
     """
     if len(mel_specs) != 3:
         raise ValueError("mel_specs must contain 3 spectrograms (512, 1024, 2048).")
@@ -321,9 +341,10 @@ def extract_windows(
 
     i_lo = CONTEXT_HALF
     i_hi = n_frames - CONTEXT_HALF
+    y_dtype = np.float32 if smooth_labels else np.int64
     if i_hi <= i_lo:
         return np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32), np.zeros(
-            (0,), dtype=np.int64
+            (0,), dtype=y_dtype
         )
 
     valid = np.arange(i_lo, i_hi, dtype=np.int64)
@@ -338,11 +359,19 @@ def extract_windows(
 
     if len(pos_idx) == 0:
         return np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32), np.zeros(
-            (0,), dtype=np.int64
+            (0,), dtype=y_dtype
         )
 
-    # TODO: right now, we're picking negatives randomly. Model may not be able to
-    # classify for harder cases where it's given a frame that's close to an onset
+    # Prefer negatives within hard_negative_radius frames of any positive (harder cases,
+    # matching the learninggenerator2 approach from the onset detection paper)
+    if hard_negative_radius is not None and len(pos_idx) > 0:
+        near_mask = np.zeros(n_frames, dtype=bool)
+        for p in pos_idx:
+            near_mask[max(0, p - hard_negative_radius) : min(n_frames, p + hard_negative_radius + 1)] = True
+        near_neg_idx = neg_idx[near_mask[neg_idx]]
+        if len(near_neg_idx) > 0:
+            neg_idx = near_neg_idx
+
     if negative_ratio is None:
         neg_pick = neg_idx
     else:
@@ -361,13 +390,14 @@ def extract_windows(
     rng.shuffle(centers)
 
     X = np.empty((len(centers), 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32)
-    y = np.empty((len(centers),), dtype=np.int64)
+    y = np.empty((len(centers),), dtype=y_dtype)
+    soft = milden(labels) if smooth_labels else None
 
     for k, i in enumerate(centers):
         i = int(i)
         for r, spec in enumerate(mel_specs):
             X[k, r] = spec[i - CONTEXT_HALF : i + CONTEXT_HALF + 1]
-        y[k] = labels[i]
+        y[k] = soft[i] if soft is not None else labels[i]
 
     return X, y
 
@@ -401,6 +431,8 @@ class OnsetPipelineConfig:
     n_mels: int = N_MELS
     negative_ratio: Optional[float] = 1.0  # ~1:1 vs positives; None = all negatives
     seed: int = 0
+    hard_negative_radius: Optional[int] = 60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
+    smooth_labels: bool = False  # if True, apply milden(): onset=1.0, ±1 frame=0.25
 
 
 def pipeline_from_audio(
@@ -446,6 +478,8 @@ def pipeline_from_audio(
         rng=rng,
         negative_ratio=cfg.negative_ratio,
         neg_exclude_mask=neg_exclude_mask,
+        hard_negative_radius=cfg.hard_negative_radius,
+        smooth_labels=cfg.smooth_labels,
     )
 
 
