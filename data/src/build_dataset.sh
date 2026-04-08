@@ -55,7 +55,7 @@ print_usage() {
     printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_dir> -n <note_types> [-b <batch_size>] [-r <negative_ratio>] [-c] [-s]\n" "$DATA_SRC"
 }
 
-while getopts ":d:f:n:c:b:r:s" flag; do
+while getopts ":d:f:n:b:r:sc" flag; do
   case "$flag" in
     c) clear_flag='true' ;;
     d) diff_flag="$OPTARG" ;;
@@ -87,7 +87,7 @@ if [[ -d "$export_dir" ]]; then
   exit 1
 fi
 
-if ! [[ -d "$DATA_DST" || -d "$DATA_SRC" ]]; then
+if ! [[ -d "$DATA_DST" && -d "$DATA_SRC" ]]; then
     echo "Couldn't find $DATA_DST or $DATA_SRC."
     exit 1
 fi
