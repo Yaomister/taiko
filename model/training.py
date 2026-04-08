@@ -2,14 +2,19 @@
 Training script for Taiko CNN note classifier. Loads preprocessed .npz batch files and trains the CNN model.
 
 Usage:
-    --data_dir data/preprocessed/train_data \\
-    --out models/my_model.pt \\
-    --epochs 100 \\
-    --lr 0.001 \\
-    --batch_size 256
+    python model/training.py \\
+        --mode binary \\
+        --data_dir data/preprocessed/exports/my_dataset \\
+        --out models/my_model.pt
 
+    python model/training.py \\
+        --mode multiclass \\
+        --data_dir data/preprocessed/exports/my_dataset \\
+        --out models/my_model.pt
 
 Arguments:
+    --mode (str): Training mode: "binary" (onset detection) or "multiclass" (note type classification). Required.
+
     --data_dir (str): Directory containing batch_0.npz, batch_1.npz, ... and metadata.json (required)
 
     --out (str): File path to save the trained model weights (required)
@@ -20,9 +25,9 @@ Arguments:
 
     --batch_size (int): Mini-batch size for training. Default is 256
 
-    --val_split (float): Proportion of data to use for validation. Default is 0.1
+    --split_prop (float): Proportion of data to use for validation. Default is 0.1
 
-    --seed (int): Random seed. Default is 0
+    --seed (int): Random seed. Default is 1
 
     --dropout (float): Dropout rate on fully connected layers. Default is 0.5
 
@@ -38,7 +43,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-from torchmetrics.classification import MulticlassROC, MulticlassAUROC
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from cnn import CNN
@@ -46,21 +50,23 @@ from typing import Tuple
 import glob
 
 
-def train(
+def train_binary(
     model: CNN,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     loss_function: nn.Module,
     device: torch.device,
 ) -> float:
-    """Train one epoch, returns average loss."""
+    """Train one epoch for binary mode, returns average loss."""
     model.train()
     total_loss = 0.0
     for X_batch, y_batch in loader:
         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
         optimizer.zero_grad()
         logits = model(X_batch)
-        targets = y_batch.float() if y_batch.is_floating_point() else (y_batch > 0).float()
+        targets = (
+            y_batch.float() if y_batch.is_floating_point() else (y_batch > 0).float()
+        )
         loss = loss_function(logits, targets.unsqueeze(1))
         loss.backward()
         optimizer.step()
@@ -68,15 +74,10 @@ def train(
     return total_loss / len(loader.dataset)
 
 
-def evaluate(
+def evaluate_binary(
     model: CNN, loader: DataLoader, loss_function: nn.Module, device: torch.device
 ) -> Tuple[float, int, int, int, int]:
-    """Returns (average loss, TP, FP, FN, total samples).
-
-    TP (true positive):  predicted onset, actually an onset
-    FP (false positive): predicted onset, actually background
-    FN (false negative): predicted background, actually an onset
-    """
+    """Returns (average loss, TP, FP, FN, total samples) for binary mode."""
     model.eval()
     total_loss, tp, fp, fn, total = 0.0, 0, 0, 0, 0
     with torch.no_grad():
@@ -84,15 +85,66 @@ def evaluate(
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             logits = model(X_batch)
             preds = (logits.squeeze(1) > 0).long()
-            targets = y_batch.float() if y_batch.is_floating_point() else (y_batch > 0).float()
+            targets = (
+                y_batch.float()
+                if y_batch.is_floating_point()
+                else (y_batch > 0).float()
+            )
             loss = loss_function(logits, targets.unsqueeze(1))
             total_loss += loss.item() * len(X_batch)
-            gt = (y_batch > 0.5).long() if y_batch.is_floating_point() else (y_batch > 0).long()
+            gt = (
+                (y_batch > 0.5).long()
+                if y_batch.is_floating_point()
+                else (y_batch > 0).long()
+            )
             tp += (preds & gt).sum().item()
             fp += (preds & ~gt.bool()).sum().item()
             fn += (~preds.bool() & gt).sum().item()
             total += len(X_batch)
     return total_loss / total, tp, fp, fn, total
+
+
+def train_multiclass(
+    model: CNN,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    loss_function: nn.Module,
+    device: torch.device,
+) -> float:
+    """Train one epoch for multiclass mode, returns average loss."""
+    model.train()
+    total_loss = 0.0
+    for X_batch, y_batch in loader:
+        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        optimizer.zero_grad()
+        logits = model(X_batch)
+        loss = loss_function(logits, y_batch.long())
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item() * len(X_batch)
+    return total_loss / len(loader.dataset)
+
+
+def evaluate_multiclass(
+    model: CNN,
+    loader: DataLoader,
+    loss_function: nn.Module,
+    device: torch.device,
+    n_classes: int,
+) -> Tuple[float, int, int]:
+    """Returns (average loss, correct predictions, total samples) for multiclass mode."""
+    model.eval()
+    total_loss, correct, total = 0.0, 0, 0
+    with torch.no_grad():
+        for X_batch, y_batch in loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            logits = model(X_batch)
+            loss = loss_function(logits, y_batch.long())
+            total_loss += loss.item() * len(X_batch)
+            preds = logits.argmax(dim=1)
+            correct += (preds == y_batch.long()).sum().item()
+            total += len(X_batch)
+    return total_loss / total, correct, total
 
 
 def plot_losses(
@@ -104,7 +156,7 @@ def plot_losses(
     plt.plot(epochs, train_losses, label="Train loss")
     plt.plot(epochs, val_losses, label="Val loss")
     plt.xlabel("Epoch")
-    plt.ylabel("BCE loss")
+    plt.ylabel("Loss")
     plt.title("Training and validation loss")
     plt.legend()
     plt.tight_layout()
@@ -115,6 +167,13 @@ def plot_losses(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train the CNN on preprocessed .npz data."
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        required=True,
+        choices=["binary", "multiclass"],
+        help="Training mode: 'binary' for onset detection, 'multiclass' for note type classification",
     )
     parser.add_argument(
         "--data_dir",
@@ -150,9 +209,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    os.makedirs(
-        os.path.dirname(args.out), exist_ok=True
-    )  # Create out path if it doesn't exist
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -173,14 +230,15 @@ def main() -> None:
     print(f"Loaded {n_samples:,} samples from {len(batch_files)} batch files")
     print(f"Train: {val_start:,} samples | Val: {n_samples - val_start:,} samples")
 
-    # Build model
-    model = CNN(in_channels=3, dropout=args.dropout).to(device)
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
-    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #     optimizer, mode="min", factor=0.7, patience=10, min_lr=1e-6
-    # )
+    # Build model and loss
+    if args.mode == "binary":
+        model = CNN(in_channels=3, dropout=args.dropout).to(device)
+        loss_function = nn.BCEWithLogitsLoss()
+    else:
+        model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
+        loss_function = nn.CrossEntropyLoss()
 
-    loss_function = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
     train_losses, val_losses = [], []
     best_val_loss = float("inf")
     best_state_dict = None
@@ -189,8 +247,13 @@ def main() -> None:
     with tqdm(range(1, args.epochs + 1), desc="Training", unit="epoch") as pbar:
         for epoch in pbar:
             train_loss_sum, val_loss_sum, train_total = 0.0, 0.0, 0
-            tp, fp, fn, total = 0, 0, 0, 0
             samples_seen = 0
+
+            # Mode-specific val accumulators
+            if args.mode == "binary":
+                tp, fp, fn, total = 0, 0, 0, 0
+            else:
+                correct, total = 0, 0
 
             for path in batch_files:
                 data = np.load(path)
@@ -207,10 +270,15 @@ def main() -> None:
                         batch_size=args.batch_size,
                         shuffle=True,
                     )
-                    train_loss_sum += (
-                        train(model, loader, optimizer, loss_function, device)
-                        * batch_train_end
-                    )
+                    if args.mode == "binary":
+                        batch_loss = train_binary(
+                            model, loader, optimizer, loss_function, device
+                        )
+                    else:
+                        batch_loss = train_multiclass(
+                            model, loader, optimizer, loss_function, device
+                        )
+                    train_loss_sum += batch_loss * batch_train_end
                     train_total += batch_train_end
 
                 if batch_val_start < n:
@@ -219,23 +287,47 @@ def main() -> None:
                         batch_size=args.batch_size,
                         shuffle=False,
                     )
-                    bl, btp, bfp, bfn, bt = evaluate(model, loader, loss_function, device)
-                    val_loss_sum += bl * bt
-                    tp += btp
-                    fp += bfp
-                    fn += bfn
-                    total += bt
+                    if args.mode == "binary":
+                        bl, btp, bfp, bfn, bt = evaluate_binary(
+                            model, loader, loss_function, device
+                        )
+                        val_loss_sum += bl * bt
+                        tp += btp
+                        fp += bfp
+                        fn += bfn
+                        total += bt
+                    else:
+                        bl, bcorrect, bt = evaluate_multiclass(
+                            model, loader, loss_function, device, n_classes
+                        )
+                        val_loss_sum += bl * bt
+                        correct += bcorrect
+                        total += bt
 
                 samples_seen += n
                 del X, y, data
 
             train_loss = train_loss_sum / train_total
             val_loss = val_loss_sum / total
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-
             train_losses.append(train_loss)
             val_losses.append(val_loss)
+
+            if args.mode == "binary":
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                postfix = {
+                    "train_loss": f"{train_loss:.4f}",
+                    "val_loss": f"{val_loss:.4f}",
+                    "precision": f"{precision:.1%}",
+                    "recall": f"{recall:.1%}",
+                }
+            else:
+                accuracy = correct / total if total > 0 else 0.0
+                postfix = {
+                    "train_loss": f"{train_loss:.4f}",
+                    "val_loss": f"{val_loss:.4f}",
+                    "accuracy": f"{accuracy:.1%}",
+                }
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -246,14 +338,7 @@ def main() -> None:
             else:
                 epochs_no_improve += 1
 
-            pbar.set_postfix(
-                {
-                    "train_loss": f"{train_loss:.4f}",
-                    "val_loss": f"{val_loss:.4f}",
-                    "precision": f"{precision:.1%}",
-                    "recall": f"{recall:.1%}",
-                }
-            )
+            pbar.set_postfix(postfix)
 
             if epochs_no_improve >= args.patience:
                 print(
@@ -261,16 +346,13 @@ def main() -> None:
                 )
                 break
 
-            # scheduler.step(val_loss)
-
     model.load_state_dict(best_state_dict)
-
-
 
     # Save model
     torch.save(
         {
             "state_dict": model.state_dict(),
+            "mode": args.mode,
             "n_classes": n_classes,
             "args": vars(args),
         },
@@ -284,38 +366,51 @@ def main() -> None:
     plot_losses(train_losses, val_losses, plot_path)
     print(f"Loss plot saved to {plot_path}")
 
-    print("Computing ROC curve...")
-    roc = MulticlassROC(num_classes=n_classes)
-    auroc = MulticlassAUROC(num_classes=n_classes, average='macro')
-    model.eval()
-    samples_seen = 0
+    # ROC/AUROC (multiclass only)
+    if args.mode == "multiclass":
+        from torchmetrics.classification import MulticlassROC, MulticlassAUROC
 
-    for path in batch_files:
-        data = np.load(path)
-        X = torch.from_numpy(data["X"].astype(np.float32))
-        y = torch.from_numpy(data["y"].astype(np.int64))
-        n = len(X)
-        batch_val_start = max(0, min(n, val_start - samples_seen))
-        if batch_val_start < n:
-            with torch.no_grad():
-                logits = model(X[batch_val_start:].to(device)).cpu()
-            roc.update(logits, y[batch_val_start:])
-            auroc.update(logits, y[batch_val_start:])
-        samples_seen += n
-        del X, y, data
+        print("Computing ROC curve...")
+        roc = MulticlassROC(num_classes=n_classes)
+        auroc = MulticlassAUROC(num_classes=n_classes, average="macro")
+        model.eval()
+        samples_seen = 0
 
-    print(f"AUROC: {auroc.compute():.4f}")
-    fig, ax = roc.plot()
-    class_names = {0: "background", 1: "don", 2: "ka", 3: "bigDon", 4: "bigKa", 5: "drumroll", 6: "bigDrumroll", 7: "balloon"}
-    for line in ax.get_lines():
-        label = line.get_label()
-        if label.isdigit():
-            line.set_label(class_names.get(int(label), label))
-    ax.legend()
-    roc_path = os.path.splitext(args.out)[0] + "_roc.png"
-    fig.savefig(roc_path)
-    plt.close(fig)
-    print(f"ROC curve saved to {roc_path}")
+        for path in batch_files:
+            data = np.load(path)
+            X = torch.from_numpy(data["X"].astype(np.float32))
+            y = torch.from_numpy(data["y"].astype(np.int64))
+            n = len(X)
+            batch_val_start = max(0, min(n, val_start - samples_seen))
+            if batch_val_start < n:
+                with torch.no_grad():
+                    logits = model(X[batch_val_start:].to(device)).cpu()
+                roc.update(logits, y[batch_val_start:])
+                auroc.update(logits, y[batch_val_start:])
+            samples_seen += n
+            del X, y, data
+
+        print(f"AUROC: {auroc.compute():.4f}")
+        fig, ax = roc.plot()
+        class_names = {
+            0: "background",
+            1: "don",
+            2: "ka",
+            3: "bigDon",
+            4: "bigKa",
+            5: "drumroll",
+            6: "bigDrumroll",
+            7: "balloon",
+        }
+        for line in ax.get_lines():
+            label = line.get_label()
+            if label.isdigit():
+                line.set_label(class_names.get(int(label), label))
+        ax.legend()
+        roc_path = model_name + "_roc.png"
+        fig.savefig(roc_path)
+        plt.close(fig)
+        print(f"ROC curve saved to {roc_path}")
 
 
 if __name__ == "__main__":

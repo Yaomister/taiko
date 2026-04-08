@@ -195,6 +195,7 @@ def preprocess_dataset(
         "batch_size": batch_size,
         "diff": diff,
         "smooth_labels": cfg.smooth_labels,
+        "smooth_radius": cfg.smooth_radius,
         "classes": {str(v): k for k, v in class_ids.items()},
         "class_counts": {
             ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()
@@ -260,6 +261,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable label smoothing. Smoothing is on by default.",
     )
+    parser.add_argument(
+        "--smooth_radius",
+        type=int,
+        default=3,
+        help=(
+            "Half-width (frames) of the Gaussian soft-label halo around each onset. "
+            "Weight at distance d is exp(-0.5*(d/sigma)^2) with sigma=radius/sqrt(2*ln(10)), "
+            "giving ~0.1 at the boundary. Default 3 (~35 ms each side at 44100/512)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -290,6 +301,7 @@ def main() -> None:
         seed=args.seed,
         hard_negative_radius=hard_neg_radius,
         smooth_labels=not args.no_smooth_labels,
+        smooth_radius=args.smooth_radius,
     )
     preprocess_dataset(
         audio_dir=args.audio_dir,

@@ -279,18 +279,31 @@ def build_multiclass_labels(
     return labels
 
 
-def milden(labels: np.ndarray) -> np.ndarray:
+def milden(labels: np.ndarray, radius: int = 3) -> np.ndarray:
     """
-    Convert hard integer labels to soft float targets (mirrors the reference project).
-    Onset frames (labels != 0) stay at 1.0; immediately adjacent frames get 0.25
-    unless they are themselves onset frames (np.maximum preserves the higher value).
+    Convert hard integer labels to soft float targets with Gaussian falloff.
+
+    Onset frames (labels != 0) get 1.0; neighboring frames within `radius` frames
+    receive exp(-0.5 * (d / sigma)^2) where sigma = radius / sqrt(2 * ln(10)),
+    giving a weight of ~0.1 at the boundary (d == radius).
+    np.maximum preserves the higher value so overlapping halos don't clobber each other.
+
+    Default radius=3 gives approximately: ±1 → 0.77, ±2 → 0.36, ±3 → 0.10.
+    This covers typical annotation jitter (±10–20 ms) and the natural 2–3 frame
+    spread of attack transients at 512/44100 ≈ 11.6 ms per frame.
     """
     soft = (labels != 0).astype(np.float32)
+    if radius <= 0:
+        return soft
+    sigma = radius / np.sqrt(2.0 * np.log(10.0))
+    d_arr = np.arange(1, radius + 1, dtype=np.float32)
+    weights = np.exp(-0.5 * (d_arr / sigma) ** 2)
     for f in np.where(labels != 0)[0]:
-        if f > 0:
-            np.maximum(soft[f - 1 : f], 0.25, out=soft[f - 1 : f])
-        if f < len(labels) - 1:
-            np.maximum(soft[f + 1 : f + 2], 0.25, out=soft[f + 1 : f + 2])
+        for d, w in zip(range(1, radius + 1), weights):
+            if f - d >= 0:
+                np.maximum(soft[f - d : f - d + 1], w, out=soft[f - d : f - d + 1])
+            if f + d < len(labels):
+                np.maximum(soft[f + d : f + d + 1], w, out=soft[f + d : f + d + 1])
     return soft
 
 
@@ -304,6 +317,7 @@ def extract_windows(
     neg_exclude_mask: Optional[np.ndarray] = None,
     hard_negative_radius: Optional[int] = None,
     smooth_labels: bool = False,
+    smooth_radius: int = 3,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build training samples: X (N, 3, 15, 80), y (N,) multi-class.
@@ -395,7 +409,7 @@ def extract_windows(
 
     X = np.empty((len(centers), 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32)
     y = np.empty((len(centers),), dtype=y_dtype)
-    soft = milden(labels) if smooth_labels else None
+    soft = milden(labels, radius=smooth_radius) if smooth_labels else None
 
     for k, i in enumerate(centers):
         i = int(i)
@@ -439,7 +453,10 @@ class OnsetPipelineConfig:
     hard_negative_radius: Optional[int] = (
         60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
     )
-    smooth_labels: bool = False  # if True, apply milden(): onset=1.0, ±1 frame=0.25
+    smooth_labels: bool = False  # if True, apply milden() Gaussian soft targets
+    smooth_radius: int = (
+        3  # half-width of Gaussian halo in frames (~35 ms at 512/44100)
+    )
 
 
 def pipeline_from_audio(
@@ -489,6 +506,7 @@ def pipeline_from_audio(
         neg_exclude_mask=neg_exclude_mask,
         hard_negative_radius=cfg.hard_negative_radius,
         smooth_labels=cfg.smooth_labels,
+        smooth_radius=cfg.smooth_radius,
     )
 
 
@@ -512,7 +530,11 @@ if torch is not None:
                     f"X must be (N, 3, {CONTEXT_FRAMES}, {N_MELS}), got {X.shape}"
                 )
             self.X = torch.from_numpy(np.asarray(X, dtype=np.float32))
-            y_dtype = np.float32 if np.issubdtype(np.asarray(y).dtype, np.floating) else np.int64
+            y_dtype = (
+                np.float32
+                if np.issubdtype(np.asarray(y).dtype, np.floating)
+                else np.int64
+            )
             self.y = torch.from_numpy(np.asarray(y, dtype=y_dtype))
 
         def __len__(self) -> int:
