@@ -316,7 +316,6 @@ def extract_windows(
     max_negatives: Optional[int] = None,
     neg_exclude_mask: Optional[np.ndarray] = None,
     hard_negative_radius: Optional[int] = None,
-    smooth_labels: bool = False,
     smooth_radius: int = 3,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -335,8 +334,7 @@ def extract_windows(
     True are never sampled as negatives, even if labels[i]==0. Use this to exclude
     frames that belong to note types not in the requested class set.
 
-    smooth_labels: if True, apply milden() so y is float32 with soft targets
-    (1.0 at onset, 0.25 at ±1 frame). Sampling decisions still use hard labels.
+    smooth_radius: half-width of Gaussian halo in frames. Set to 0 to use hard labels.
     """
     if len(mel_specs) != 3:
         raise ValueError("mel_specs must contain 3 spectrograms (512, 1024, 2048).")
@@ -355,7 +353,7 @@ def extract_windows(
 
     i_lo = CONTEXT_HALF
     i_hi = n_frames - CONTEXT_HALF
-    y_dtype = np.float32 if smooth_labels else np.int64
+    y_dtype = np.float32 if smooth_radius > 0 else np.int64
     if i_hi <= i_lo:
         return np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32), np.zeros(
             (0,), dtype=y_dtype
@@ -409,7 +407,7 @@ def extract_windows(
 
     X = np.empty((len(centers), 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32)
     y = np.empty((len(centers),), dtype=y_dtype)
-    soft = milden(labels, radius=smooth_radius) if smooth_labels else None
+    soft = milden(labels, radius=smooth_radius) if smooth_radius > 0 else None
 
     for k, i in enumerate(centers):
         i = int(i)
@@ -453,9 +451,8 @@ class OnsetPipelineConfig:
     hard_negative_radius: Optional[int] = (
         60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
     )
-    smooth_labels: bool = False  # if True, apply milden() Gaussian soft targets
     smooth_radius: int = (
-        3  # half-width of Gaussian halo in frames (~35 ms at 512/44100)
+        3  # half-width of Gaussian halo in frames (~35 ms at 512/44100); set to 0 to disable
     )
 
 
@@ -505,7 +502,6 @@ def pipeline_from_audio(
         negative_ratio=cfg.negative_ratio,
         neg_exclude_mask=neg_exclude_mask,
         hard_negative_radius=cfg.hard_negative_radius,
-        smooth_labels=cfg.smooth_labels,
         smooth_radius=cfg.smooth_radius,
     )
 

@@ -59,10 +59,9 @@ Supported flags:
 | `-b` | Optional | Batch size; songs per dataset file (default: `50`)                                                             |
 | `-c` | Optional | Clears labels directory for the specified difficulty.                                                          |
 | `-r` | Optional | Ratio of negatives over positives (default: `1.0`).                                                            |
-| `-R` | Optional | Gaussian halo radius in frames (default: `3`, ~35 ms each side). Ignored if `-s` is set.                       |
-| `-s` | Optional | Disable note smoothing (default: on)                                                                           |
+| `-R` | Optional | Note smoothing radius in frames (default: `3`, ~35 ms each side). Set to `0` to disable smoothing.             |
 
-Note smoothing applies Gaussian soft labels around each onset frame. The onset frame itself gets a target of `1.0`; neighboring frames within the radius get `exp(-0.5 * (d/σ)²)` where `σ = radius / √(2 ln 10)`, giving ~`0.1` at the boundary. At the default radius of 3 frames (~35 ms each side), weights are approximately `±1 → 0.77`, `±2 → 0.36`, `±3 → 0.10`. This covers typical annotation jitter (±10–20 ms) and the natural 2–3 frame spread of attack transients at 512/44100 ≈ 11.6 ms per frame. Halo frames are still sampled as negatives; only their soft target values change.
+Note smoothing applies Gaussian soft labels around each onset frame. The onset frame itself gets a target of `1.0`; neighboring frames within the radius get `exp(-0.5 * (d/σ)²)` where `σ = radius / √(2 ln 10)`, giving ~`0.1` at the boundary. At the default radius of 3 frames (~35 ms each side), weights are approximately `±1 → 0.77`, `±2 → 0.36`, `±3 → 0.10`. This covers typical annotation jitter (±10–20 ms) and the natural 2–3 frame spread of attack transients at 512/44100 ≈ 11.6 ms per frame. Halo frames are still sampled as negatives; only their soft target values change. To disable, pass `-R 0`.
 
 Example:
 

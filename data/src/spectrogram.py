@@ -145,7 +145,7 @@ def preprocess_dataset(
             # print(f"No samples for {base}, skipping.")
             continue
 
-        # Print class distribution. When smooth_labels is on, recover hard labels from
+        # Print class distribution. When smoothing is on (smooth_radius > 0), recover hard labels from
         # the integer class_ids mapping by rounding, so the display shows real note types.
         id_to_name = {v: k for k, v in class_ids.items()}
         hard_y = np.round(y).astype(np.int64) if y.dtype.kind == "f" else y
@@ -194,7 +194,6 @@ def preprocess_dataset(
         "n_songs": n_songs,
         "batch_size": batch_size,
         "diff": diff,
-        "smooth_labels": cfg.smooth_labels,
         "smooth_radius": cfg.smooth_radius,
         "classes": {str(v): k for k, v in class_ids.items()},
         "class_counts": {
@@ -257,11 +256,6 @@ def parse_args() -> argparse.Namespace:
         type=str,
     )
     parser.add_argument(
-        "--no_smooth_labels",
-        action="store_true",
-        help="Disable label smoothing. Smoothing is on by default.",
-    )
-    parser.add_argument(
         "--smooth_radius",
         type=int,
         default=3,
@@ -300,7 +294,6 @@ def main() -> None:
         negative_ratio=neg_ratio,
         seed=args.seed,
         hard_negative_radius=hard_neg_radius,
-        smooth_labels=not args.no_smooth_labels,
         smooth_radius=args.smooth_radius,
     )
     preprocess_dataset(

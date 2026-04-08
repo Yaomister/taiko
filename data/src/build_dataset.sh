@@ -26,8 +26,7 @@
 #     -b: batch size; number of songs per dataset file. Default: 50
 #     -c: clears labels/<difficulty>/ under preprocessed (or -o labels tree).
 #     -r: negative-to-positive sample ratio. Use -1 for all negatives. Default: 1.0
-#     -s: disable label smoothing (on by default).
-#     -R: Gaussian halo radius in frames (default: 3, ~35 ms each side). Ignored if -s is set.
+#     -R: Gaussian halo radius in frames (default: 3, ~35 ms each side). Set to 0 to disable smoothing.
 
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,15 +48,14 @@ dataset_dir_flag=''
 note_types=''
 batch_size=''
 negative_ratio=''
-no_smooth_labels=''
 smooth_radius=''
 
 # Args handling
 print_usage() {
-    printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_dir> -n <note_types> [-b <batch_size>] [-r <negative_ratio>] [-R <smooth_radius>] [-c] [-s]\n" "$DATA_SRC"
+    printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_dir> -n <note_types> [-b <batch_size>] [-r <negative_ratio>] [-R <smooth_radius>] [-c]\n" "$DATA_SRC"
 }
 
-while getopts ":d:f:n:b:r:R:sc" flag; do
+while getopts ":d:f:n:b:r:R:c" flag; do
   case "$flag" in
     c) clear_flag='true' ;;
     d) diff_flag="$OPTARG" ;;
@@ -66,7 +64,6 @@ while getopts ":d:f:n:b:r:R:sc" flag; do
     b) batch_size="$OPTARG" ;;
     r) negative_ratio="$OPTARG" ;;
     R) smooth_radius="$OPTARG" ;;
-    s) no_smooth_labels='true' ;;
     :)
       echo "Option -$OPTARG requires an argument"
       exit 1 ;;
@@ -140,10 +137,6 @@ fi
 
 if [[ -n "$negative_ratio" ]]; then
   cmd+=(--negative_ratio "$negative_ratio")
-fi
-
-if [[ -n "$no_smooth_labels" ]]; then
-  cmd+=(--no_smooth_labels)
 fi
 
 if [[ -n "$smooth_radius" ]]; then
