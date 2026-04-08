@@ -1,6 +1,6 @@
 node_modules/
 data/dst
-data/src/__pycache__
+**/__pycache__/
 data/preprocessed
 data/tracks
 .vscode/
