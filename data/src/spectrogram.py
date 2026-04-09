@@ -35,7 +35,14 @@ Arguments:
     
     --seed (int): Random seed for reproducibility.
     Default: 0
-    
+
+    --hard_negative_radius (int): Sample negatives within this many frames of a note event.
+    Set to -1 to disable. Default: 60
+
+    --onset_weight_radius (int): Background frames within this many frames of a note onset get
+    linearly reduced loss weight (weight = dist / radius). Positive frames always get weight 1.0.
+    Set to 0 to disable. Default: 4
+
     --diff (str): Difficulty level of the songs.
 """
 
@@ -70,17 +77,20 @@ from data.src.spectrogram_utils import (
 def export_and_clear_batch(
     batch_X: List[np.ndarray],
     batch_Y: List[np.ndarray],
+    batch_W: List[np.ndarray],
     batch_num: int,
     out_path: str,
 ):
     """
-    Exports a batch to a given output path. Note that this function clears batch_X and batch_Y
-    to save memory.
+    Exports a batch to a given output path. Note that this function clears batch_X, batch_Y,
+    and batch_W to save memory.
     """
     X_all = np.concatenate(batch_X, axis=0)
     batch_X.clear()
     y_all = np.concatenate(batch_Y, axis=0)
     batch_Y.clear()
+    w_all = np.concatenate(batch_W, axis=0)
+    batch_W.clear()
 
     # Export batch to .npz
     file_path = f"{out_path}/batch_{batch_num}"
@@ -88,6 +98,7 @@ def export_and_clear_batch(
         file=file_path,
         X=X_all,
         y=y_all,
+        weights=w_all,
     )
 
 
@@ -110,6 +121,8 @@ def preprocess_dataset(
     batch_X: List[np.ndarray] = []
     # y shape: int64 (N,), (beat classes)
     batch_Y: List[np.ndarray] = []
+    # weights shape: float32 (N,), per-sample loss weights
+    batch_W: List[np.ndarray] = []
     batch_n_songs = 0
 
     class_cnts = Counter()  # Count of appearances per class in the dataset
@@ -140,7 +153,7 @@ def preprocess_dataset(
             # print(f"Skipping {base}: missing JSON {json_path}")
             continue
 
-        X, y = process_song(audio_path, json_path, cfg, rng, allowed_types)
+        X, y, weights = process_song(audio_path, json_path, cfg, rng, allowed_types)
         if X.shape[0] == 0:
             # print(f"No samples for {base}, skipping.")
             continue
@@ -157,6 +170,7 @@ def preprocess_dataset(
 
         batch_X.append(X)
         batch_Y.append(y)
+        batch_W.append(weights)
         batch_n_songs += 1
 
         n_samples += X.shape[0]
@@ -171,6 +185,7 @@ def preprocess_dataset(
                 batch_num=batch_num,
                 batch_X=batch_X,
                 batch_Y=batch_Y,
+                batch_W=batch_W,
                 out_path=out_path,
             )
             batch_num += 1
@@ -182,6 +197,7 @@ def preprocess_dataset(
             batch_num=batch_num,
             batch_X=batch_X,
             batch_Y=batch_Y,
+            batch_W=batch_W,
             out_path=out_path,
         )
 
@@ -196,6 +212,7 @@ def preprocess_dataset(
             ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()
         },
         "negative_ratio": cfg.negative_ratio,
+        "onset_weight_radius": cfg.onset_weight_radius,
         "seed": cfg.seed,
         "sample_rate": SAMPLE_RATE,
         "hop_size": HOP_SIZE,
@@ -232,6 +249,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=60,
         help="Sample negatives within this many frames of a note event (~0.7s at 44100/512). Set to -1 to disable.",
+    )
+    parser.add_argument(
+        "--onset_weight_radius",
+        type=int,
+        default=4,
+        help="Background frames within this many frames of a note onset get linearly reduced loss weight (weight = dist / radius). Set to 0 to disable.",
     )
     allowed = [n.value for n in NoteType]
 
@@ -280,6 +303,7 @@ def main() -> None:
         negative_ratio=neg_ratio,
         seed=args.seed,
         hard_negative_radius=hard_neg_radius,
+        onset_weight_radius=args.onset_weight_radius,
     )
     preprocess_dataset(
         audio_dir=args.audio_dir,

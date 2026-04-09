@@ -51,18 +51,16 @@ A more detailed explanation can be found [here](https://docs.google.com/document
 
 Supported flags:
 
-| Flag | Type     | Description                                                                                                    |
-| ---- | -------- | -------------------------------------------------------------------------------------------------------------- |
-| `-d` | Required | Course difficulty. See [supported difficulties](https://jozsefsallai.github.io/tja-js/classes/Difficulty.html) |
-| `-f` | Required | Output directory name under `<data>/preprocessed/exports/`                                                     |
-| `-n` | Required | Note types (comma-separated, e.g. `don,ka`. See `data/src/spectrogram_utils.py` for supported note types.)     |
-| `-b` | Optional | Batch size; songs per dataset file (default: `50`)                                                             |
-| `-c` | Optional | Clears labels directory for the specified difficulty.                                                          |
-| `-r` | Optional | Ratio of negatives over positives (default: `1.0`).                                                            |
-| `-H` | Optional | Hard negative radius in frames. Negatives are sampled within this many frames of a note event (default: `60`, ~0.7s). Set to `-1` to disable. |
-| `-R` | Optional | Note smoothing radius in frames (default: `3`, ~35 ms each side). Set to `0` to disable smoothing.             |
-
-Note smoothing applies Gaussian soft labels around each onset frame. The onset frame itself gets a target of `1.0`; neighboring frames within the radius get `exp(-0.5 * (d/σ)²)` where `σ = radius / √(2 ln 10)`, giving ~`0.1` at the boundary. At the default radius of 3 frames (~35 ms each side), weights are approximately `±1 → 0.77`, `±2 → 0.36`, `±3 → 0.10`. This covers typical annotation jitter (±10–20 ms) and the natural 2–3 frame spread of attack transients at 512/44100 ≈ 11.6 ms per frame. Halo frames are still sampled as negatives; only their soft target values change. To disable, pass `-R 0`.
+| Flag | Type     | Description                                                                                                                                                                                                                     |
+| ---- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-d` | Required | Course difficulty. See [supported difficulties](https://jozsefsallai.github.io/tja-js/classes/Difficulty.html)                                                                                                                  |
+| `-f` | Required | Output directory name under `<data>/preprocessed/exports/`                                                                                                                                                                      |
+| `-n` | Required | Note types (comma-separated, e.g. `don,ka`. See `data/src/spectrogram_utils.py` for supported note types.)                                                                                                                      |
+| `-b` | Optional | Batch size; songs per dataset file (default: `50`)                                                                                                                                                                              |
+| `-c` | Optional | Clears labels directory for the specified difficulty.                                                                                                                                                                           |
+| `-r` | Optional | Ratio of negatives over positives (default: `1.0`).                                                                                                                                                                             |
+| `-H` | Optional | Hard negative radius in frames. Negatives are sampled within this many frames of a note event (default: `60`, ~0.7s). Set to `-1` to disable.                                                                                   |
+| `-W` | Optional | Onset weight radius in frames. Background frames within this radius of a note onset get linearly reduced loss weight (`weight = dist / radius`). Positive frames always get weight `1.0` (default: `4`). Set to `0` to disable. |
 
 Example:
 

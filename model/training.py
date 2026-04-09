@@ -52,11 +52,12 @@ def train(
     """Train one epoch, returns average loss."""
     model.train()
     total_loss = 0.0
-    for X_batch, y_batch in loader:
-        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+    for X_batch, y_batch, w_batch in loader:
+        X_batch, y_batch, w_batch = X_batch.to(device), y_batch.to(device), w_batch.to(device)
         optimizer.zero_grad()
         logits = model(X_batch)
-        loss = loss_function(logits, y_batch.long())
+        per_sample_loss = nn.functional.cross_entropy(logits, y_batch.long(), reduction="none")
+        loss = (per_sample_loss * w_batch).mean()
         loss.backward()
         optimizer.step()
         total_loss += loss.item() * len(X_batch)
@@ -179,13 +180,18 @@ def main() -> None:
                 X = torch.from_numpy(data["X"].astype(np.float32))
                 y = torch.from_numpy(data["y"])
                 n = len(X)
+                w = (
+                    torch.from_numpy(data["weights"].astype(np.float32))
+                    if "weights" in data
+                    else torch.ones(n, dtype=torch.float32)
+                )
 
                 batch_train_end = max(0, min(n, val_start - samples_seen))
                 batch_val_start = batch_train_end
 
                 if batch_train_end > 0:
                     loader = DataLoader(
-                        TensorDataset(X[:batch_train_end], y[:batch_train_end]),
+                        TensorDataset(X[:batch_train_end], y[:batch_train_end], w[:batch_train_end]),
                         batch_size=args.batch_size,
                         shuffle=True,
                     )
@@ -205,7 +211,7 @@ def main() -> None:
                     total += bt
 
                 samples_seen += n
-                del X, y, data
+                del X, y, w, data
 
             train_loss = train_loss_sum / train_total
             val_loss = val_loss_sum / total

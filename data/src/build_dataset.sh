@@ -28,6 +28,8 @@
 #     -r: negative-to-positive sample ratio. Use -1 for all negatives. Default: 1.0
 #     -H: hard negative radius in frames. Negatives sampled within this many frames of a note event.
 #         Set to -1 to disable. Default: 60
+#     -W: onset weight radius in frames. Background frames within this radius get linearly reduced
+#         loss weight (weight = dist / radius). Set to 0 to disable. Default: 2
 
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,13 +52,14 @@ note_types=''
 batch_size=''
 negative_ratio=''
 hard_negative_radius=''
+onset_weight_radius=''
 
 # Args handling
 print_usage() {
-    printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_dir> -n <note_types> [-b <batch_size>] [-r <negative_ratio>] [-H <hard_negative_radius>] [-c]\n" "$DATA_SRC"
+    printf "Usage: %s/build_dataset.sh -d <difficulty> -f <export_dir> -n <note_types> [-b <batch_size>] [-r <negative_ratio>] [-H <hard_negative_radius>] [-W <onset_weight_radius>] [-c]\n" "$DATA_SRC"
 }
 
-while getopts ":d:f:n:b:r:H:c" flag; do
+while getopts ":d:f:n:b:r:H:W:c" flag; do
   case "$flag" in
     c) clear_flag='true' ;;
     d) diff_flag="$OPTARG" ;;
@@ -65,6 +68,7 @@ while getopts ":d:f:n:b:r:H:c" flag; do
     b) batch_size="$OPTARG" ;;
     r) negative_ratio="$OPTARG" ;;
     H) hard_negative_radius="$OPTARG" ;;
+    W) onset_weight_radius="$OPTARG" ;;
     :)
       echo "Option -$OPTARG requires an argument"
       exit 1 ;;
@@ -142,6 +146,10 @@ fi
 
 if [[ -n "$hard_negative_radius" ]]; then
   cmd+=(--hard_negative_radius "$hard_negative_radius")
+fi
+
+if [[ -n "$onset_weight_radius" ]]; then
+  cmd+=(--onset_weight_radius "$onset_weight_radius")
 fi
 
 PYTHONPATH="$REPO_ROOT" "${cmd[@]}"

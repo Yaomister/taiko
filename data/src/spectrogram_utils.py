@@ -288,9 +288,11 @@ def extract_windows(
     max_negatives: Optional[int] = None,
     neg_exclude_mask: Optional[np.ndarray] = None,
     hard_negative_radius: Optional[int] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+    onset_weight_radius: int = 0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Build training samples: X (N, 3, 15, 80), y (N,) multi-class integer class ids.
+    Build training samples: X (N, 3, 15, 80), y (N,) multi-class integer class ids,
+    weights (N,) float32 per-sample loss weights.
 
     For each valid center i in [CONTEXT_HALF, num_frames - CONTEXT_HALF):
       patch_res = mel_spec[i-7:i+8]  (15, 80)
@@ -304,6 +306,10 @@ def extract_windows(
     neg_exclude_mask: boolean array of shape (num_frames,). Frames where this is
     True are never sampled as negatives, even if labels[i]==0. Use this to exclude
     frames that belong to note types not in the requested class set.
+
+    onset_weight_radius: background frames within this many frames of a positive get
+    weight = dist / onset_weight_radius (linear ramp from 0 at the onset out to 1.0 at
+    the boundary). Positive frames always get weight 1.0. 0 = disabled (all weights 1.0).
     """
     if len(mel_specs) != 3:
         raise ValueError("mel_specs must contain 3 spectrograms (512, 1024, 2048).")
@@ -323,8 +329,10 @@ def extract_windows(
     i_lo = CONTEXT_HALF
     i_hi = n_frames - CONTEXT_HALF
     if i_hi <= i_lo:
-        return np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32), np.zeros(
-            (0,), dtype=np.int64
+        return (
+            np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32),
+            np.zeros((0,), dtype=np.int64),
+            np.ones((0,), dtype=np.float32),
         )
 
     valid = np.arange(i_lo, i_hi, dtype=np.int64)
@@ -338,8 +346,10 @@ def extract_windows(
     rng = rng or np.random.default_rng()
 
     if len(pos_idx) == 0:
-        return np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32), np.zeros(
-            (0,), dtype=np.int64
+        return (
+            np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32),
+            np.zeros((0,), dtype=np.int64),
+            np.ones((0,), dtype=np.float32),
         )
 
     # Prefer negatives within hard_negative_radius frames of any positive (harder cases,
@@ -382,7 +392,26 @@ def extract_windows(
             X[k, r] = spec[i - CONTEXT_HALF : i + CONTEXT_HALF + 1]
         y[k] = labels[i]
 
-    return X, y
+    # Compute per-sample loss weights
+    if onset_weight_radius > 0:
+        sorted_pos = np.sort(pos_idx)
+        ins = np.searchsorted(sorted_pos, centers)
+        left_idx = np.clip(ins - 1, 0, len(sorted_pos) - 1)
+        right_idx = np.clip(ins, 0, len(sorted_pos) - 1)
+        min_dist = np.minimum(
+            np.abs(centers - sorted_pos[left_idx]),
+            np.abs(centers - sorted_pos[right_idx]),
+        ).astype(np.float32)
+        is_pos = labels[centers] != 0
+        weights = np.where(
+            is_pos,
+            1.0,
+            np.minimum(1.0, min_dist / onset_weight_radius),
+        ).astype(np.float32)
+    else:
+        weights = np.ones(len(centers), dtype=np.float32)
+
+    return X, y, weights
 
 
 def notes_json_to_onset_times_sec(
@@ -418,6 +447,7 @@ class OnsetPipelineConfig:
     hard_negative_radius: Optional[int] = (
         60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
     )
+    onset_weight_radius: int = 4  # frames; background frames within this radius get linearly reduced loss weight. 0 = disabled.
 
 
 def pipeline_from_audio(
@@ -426,9 +456,10 @@ def pipeline_from_audio(
     class_ids: Dict[str, int],
     cfg: Optional[OnsetPipelineConfig] = None,
     rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Full pipeline: converts audio + note JSON labels to X (N, 3, 15, 80), y (N,) multi-class note type ids.
+    Full pipeline: converts audio + note JSON labels to X (N, 3, 15, 80), y (N,),
+    weights (N,) float32 per-sample loss weights.
     """
     cfg = cfg or OnsetPipelineConfig()
     rng = rng or np.random.default_rng(cfg.seed)
@@ -466,6 +497,7 @@ def pipeline_from_audio(
         negative_ratio=cfg.negative_ratio,
         neg_exclude_mask=neg_exclude_mask,
         hard_negative_radius=cfg.hard_negative_radius,
+        onset_weight_radius=cfg.onset_weight_radius,
     )
 
 
@@ -520,8 +552,8 @@ def process_song(
     cfg: OnsetPipelineConfig,
     rng: np.random.Generator,
     allowed_types: List[NoteType],
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Process one song -> (X, y) with shapes (N, 3, 15, 80), (N,)."""
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Process one song -> (X, y, weights) with shapes (N, 3, 15, 80), (N,), (N,)."""
     audio = load_audio(audio_path, sample_rate=cfg.sample_rate)
     with open(json_path, "r", encoding="utf-8") as f:
         notes = json.load(f)
