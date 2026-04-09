@@ -40,6 +40,7 @@ from tqdm import tqdm
 from cnn import CNN
 from typing import Tuple
 import glob
+from torchmetrics.classification import MulticlassROC, MulticlassAUROC
 
 
 def train(
@@ -309,9 +310,6 @@ def main() -> None:
     plot_path = model_name + ".png"
     plot_losses(train_losses, val_losses, plot_path)
     print(f"Loss plot saved to {plot_path}")
-
-    # ROC/AUROC
-    from torchmetrics.classification import MulticlassROC, MulticlassAUROC
 
     print("Computing ROC curve...")
     roc = MulticlassROC(num_classes=n_classes)

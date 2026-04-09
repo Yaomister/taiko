@@ -2,3 +2,4 @@ librosa
 torch
 tqdm
 matplotlib
+torchmetrics
