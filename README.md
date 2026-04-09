@@ -76,10 +76,11 @@ Example:
 import numpy as np
 
 data = np.load(file="../preprocessed/exports/my_dataset/batch_1.npz")
-X, y = data["X"], data["y"]
+X, y, W = data["X"], data["y"], data["W"]
 
-print(X.shape)
-print(y.shape)
+print(X.shape) # Spectrogram windows
+print(y.shape) # Spectrogram window labels
+print(W.shape) # Onset weights
 ```
 
 Note that there are multiple batch files per dataset. Load them in individually while training.
