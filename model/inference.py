@@ -250,7 +250,7 @@ def write_tja(events, bpm, title, wave, offset, out_path):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--audio", required=True, help="Path to audio file")
-    parser.add_argument("--bpm", required=True, type=float, help="BPM of the song")
+    parser.add_argument("--bpm", default=None, type=float, help="BPM of the song. Auto-detected if not provided.")
     parser.add_argument("--model", required=True, help="Path to .pth model file")
     parser.add_argument("--out", required=True, help="Output .tja path")
     parser.add_argument("--title", default="Untitled")
@@ -264,6 +264,11 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, model_type = load_model(args.model, device)
     audio = load_audio(args.audio)
+    if args.bpm is None:
+        import librosa
+        bpm, _ = librosa.beat.beat_track(y=audio, sr=SAMPLE_RATE)
+        args.bpm = float(bpm.item())
+        print(f"Auto-detected BPM: {args.bpm:.1f}")
     print(f"Running inference on {args.audio}...")
     probs, frame_indices = predict_frames(model, model_type, audio, device)
     events = postprocess(probs, frame_indices, threshold=args.threshold)
