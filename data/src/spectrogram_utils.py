@@ -501,45 +501,6 @@ def pipeline_from_audio(
     )
 
 
-if torch is not None:
-
-    class OnsetSpectrogramDataset(Dataset):
-        """
-        PyTorch Dataset for frame-wise note-type classification (multi-class; 0 = background).
-
-        __getitem__ returns:
-          x: FloatTensor (3, 15, 80) log-mel context
-          y: LongTensor scalar class id
-        """
-
-        def __init__(self, X: np.ndarray, y: np.ndarray):
-            if not torch:
-                raise ImportError("OnsetSpectrogramDataset requires PyTorch.")
-
-            if X.ndim != 4 or X.shape[1:] != (3, CONTEXT_FRAMES, N_MELS):
-                raise ValueError(
-                    f"X must be (N, 3, {CONTEXT_FRAMES}, {N_MELS}), got {X.shape}"
-                )
-            self.X = torch.from_numpy(np.asarray(X, dtype=np.float32))
-            y_dtype = (
-                np.float32
-                if np.issubdtype(np.asarray(y).dtype, np.floating)
-                else np.int64
-            )
-            self.y = torch.from_numpy(np.asarray(y, dtype=y_dtype))
-
-        def __len__(self) -> int:
-            return self.X.shape[0]
-
-        def __getitem__(self, idx: int) -> Tuple["torch.Tensor", "torch.Tensor"]:
-            return self.X[idx], self.y[idx]
-else:
-
-    class OnsetSpectrogramDataset:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("OnsetSpectrogramDataset requires PyTorch.")
-
-
 def load_audio(path: str, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     _require_librosa()
     y, _ = librosa.load(path, sr=sample_rate, mono=True)

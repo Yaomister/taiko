@@ -29,7 +29,7 @@
 #     -H: hard negative radius in frames. Negatives sampled within this many frames of a note event.
 #         Set to -1 to disable. Default: 60
 #     -W: onset weight radius in frames. Background frames within this radius get linearly reduced
-#         loss weight (weight = dist / radius). Set to 0 to disable. Default: 2
+#         loss weight (weight = dist / radius). Set to 0 to disable. Default: 4
 
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
