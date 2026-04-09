@@ -59,6 +59,7 @@ Supported flags:
 | `-b` | Optional | Batch size; songs per dataset file (default: `50`)                                                             |
 | `-c` | Optional | Clears labels directory for the specified difficulty.                                                          |
 | `-r` | Optional | Ratio of negatives over positives (default: `1.0`).                                                            |
+| `-H` | Optional | Hard negative radius in frames. Negatives are sampled within this many frames of a note event (default: `60`, ~0.7s). Set to `-1` to disable. |
 | `-R` | Optional | Note smoothing radius in frames (default: `3`, ~35 ms each side). Set to `0` to disable smoothing.             |
 
 Note smoothing applies Gaussian soft labels around each onset frame. The onset frame itself gets a target of `1.0`; neighboring frames within the radius get `exp(-0.5 * (d/σ)²)` where `σ = radius / √(2 ln 10)`, giving ~`0.1` at the boundary. At the default radius of 3 frames (~35 ms each side), weights are approximately `±1 → 0.77`, `±2 → 0.36`, `±3 → 0.10`. This covers typical annotation jitter (±10–20 ms) and the natural 2–3 frame spread of attack transients at 512/44100 ≈ 11.6 ms per frame. Halo frames are still sampled as negatives; only their soft target values change. To disable, pass `-R 0`.
@@ -89,41 +90,27 @@ Note that there are multiple batch files per dataset. Load them in individually 
 
 Trains a CNN on the preprocessed `.npz` batch files produced by the data pipeline.
 
-Two modes are supported, corresponding to the two CNN architectures:
-
-- **binary** (`cnn_binary.py`) — onset detection: predicts whether a frame contains a note or not.
-- **multiclass** (`cnn_multiclass.py`) — note type classification: predicts which note type each frame contains.
-
 ### Usage
 
 ```bash
-# Binary (onset detection)
 python model/training.py \
-  --mode binary \
-  --data_dir data/preprocessed/exports/my_dataset \
-  --out models/my_model.pth
-
-# Multiclass (note type classification)
-python model/training.py \
-  --mode multiclass \
   --data_dir data/preprocessed/exports/my_dataset \
   --out models/my_model.pth
 ```
 
 ### Arguments
 
-| Argument       | Required | Default | Description                                                               |
-| -------------- | -------- | ------- | ------------------------------------------------------------------------- |
-| `--mode`       | Yes      | —       | `binary` for onset detection or `multiclass` for note type classification |
-| `--data_dir`   | Yes      | —       | Directory containing `batch_*.npz` files and `metadata.json`              |
-| `--out`        | Yes      | —       | Path to save the trained model `.pth` file                                |
-| `--epochs`     | No       | `100`   | Number of training epochs                                                 |
-| `--lr`         | No       | `0.001` | Learning rate                                                             |
-| `--batch_size` | No       | `256`   | Mini-batch size                                                           |
-| `--split_prop` | No       | `0.1`   | Fraction of data held out for validation                                  |
-| `--dropout`    | No       | `0.5`   | Dropout rate on fully connected layers                                    |
-| `--seed`       | No       | `1`     | Random seed                                                               |
-| `--patience`   | No       | `10`    | Early stopping patience in epochs                                         |
+| Argument       | Required | Default | Description                                                  |
+| -------------- | -------- | ------- | ------------------------------------------------------------ |
+| `--data_dir`   | Yes      | —       | Directory containing `batch_*.npz` files and `metadata.json` |
+| `--out`        | Yes      | —       | Path to save the trained model `.pth` file                   |
+| `--epochs`     | No       | `100`   | Number of training epochs                                    |
+| `--lr`         | No       | `0.001` | Learning rate                                                |
+| `--batch_size` | No       | `256`   | Mini-batch size                                              |
+| `--split_prop` | No       | `0.1`   | Fraction of data held out for validation                     |
+| `--dropout`    | No       | `0.5`   | Dropout rate on fully connected layers                       |
+| `--seed`       | No       | `1`     | Random seed                                                  |
+| `--patience`   | No       | `10`    | Early stopping patience in epochs                            |
 
 ---
 
