@@ -212,6 +212,7 @@ def preprocess_dataset(
             ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()
         },
         "negative_ratio": cfg.negative_ratio,
+        "hard_negative_radius": cfg.hard_negative_radius,
         "onset_weight_radius": cfg.onset_weight_radius,
         "seed": cfg.seed,
         "sample_rate": SAMPLE_RATE,
