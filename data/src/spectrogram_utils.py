@@ -284,7 +284,7 @@ def extract_windows(
     labels: np.ndarray,
     *,
     rng: Optional[np.random.Generator] = None,
-    negative_ratio: Optional[float] = 1.0,
+    negative_percentage: Optional[float] = 1.0,
     max_negatives: Optional[int] = None,
     neg_exclude_mask: Optional[np.ndarray] = None,
     hard_negative_radius: Optional[int] = None,
@@ -300,8 +300,8 @@ def extract_windows(
       y = labels[i]  (hard integer class id; 0 = background)
 
     Balancing: include every i with labels[i]!=0 (any note class); sample background
-    frames (labels==0) to match negative_ratio * num_pos (default 1:1). If
-    negative_ratio is None, keep all background frames.
+    frames (labels==0) so that they make up negative_percentage of the total samples
+    (default 0.5 = 50% background). If negative_percentage is None, keep all background frames.
 
     neg_exclude_mask: boolean array of shape (num_frames,). Frames where this is
     True are never sampled as negatives, even if labels[i]==0. Use this to exclude
@@ -366,11 +366,12 @@ def extract_windows(
         if len(near_neg_idx) > 0:
             neg_idx = near_neg_idx
 
-    if negative_ratio is None:
+    if negative_percentage is None:
         neg_pick = neg_idx
     else:
         n_pos = len(pos_idx)
-        target_neg = int(np.ceil(n_pos * float(negative_ratio)))
+        frac = float(negative_percentage)
+        target_neg = int(np.ceil(n_pos * frac / (1.0 - frac)))
         if max_negatives is not None:
             target_neg = min(target_neg, max_negatives)
         if len(neg_idx) == 0:
@@ -442,7 +443,9 @@ class OnsetPipelineConfig:
     sample_rate: int = SAMPLE_RATE
     hop_size: int = HOP_SIZE
     n_mels: int = N_MELS
-    negative_ratio: Optional[float] = 1.0  # ~1:1 vs positives; None = all negatives
+    negative_percentage: Optional[float] = (
+        0.5  # fraction of total samples that are background (0.33 = 33%); None = all negatives
+    )
     seed: int = 0
     hard_negative_radius: Optional[int] = (
         60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
@@ -494,7 +497,7 @@ def pipeline_from_audio(
         mel_specs,
         labels,
         rng=rng,
-        negative_ratio=cfg.negative_ratio,
+        negative_percentage=cfg.negative_percentage,
         neg_exclude_mask=neg_exclude_mask,
         hard_negative_radius=cfg.hard_negative_radius,
         onset_weight_radius=cfg.onset_weight_radius,

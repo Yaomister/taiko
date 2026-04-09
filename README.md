@@ -58,14 +58,14 @@ Supported flags:
 | `-n` | Required | Note types (comma-separated, e.g. `don,ka`. See `data/src/spectrogram_utils.py` for supported note types.)                                                                                                                      |
 | `-b` | Optional | Batch size; songs per dataset file (default: `50`)                                                                                                                                                                              |
 | `-c` | Optional | Clears labels directory for the specified difficulty.                                                                                                                                                                           |
-| `-r` | Optional | Ratio of negatives over positives (default: `1.0`).                                                                                                                                                                             |
+| `-r` | Optional | Percentage of total samples that are background, as a decimal (default: `0.5`, i.e. 50%).                                                                                                                                       |
 | `-H` | Optional | Hard negative radius in frames. Negatives are sampled within this many frames of a note event (default: `60`, ~0.7s). Set to `-1` to disable.                                                                                   |
 | `-W` | Optional | Onset weight radius in frames. Background frames within this radius of a note onset get linearly reduced loss weight (`weight = dist / radius`). Positive frames always get weight `1.0` (default: `4`). Set to `0` to disable. |
 
 Example:
 
 ```bash
-./data/src/build_dataset.sh -d easy -f my_dataset -n don,ka -b 50 -r 0.25
+./data/src/build_dataset.sh -d easy -f my_dataset -n don,ka -b 50 -r 0.33
 ```
 
 #### 3. Import .npz file for each batch
@@ -99,19 +99,19 @@ python model/training.py \
 
 ### Arguments
 
-| Argument       | Required | Default | Description                                                  |
-| -------------- | -------- | ------- | ------------------------------------------------------------ |
-| `--data_dir`   | Yes      | —       | Directory containing `batch_*.npz` files and `metadata.json` |
-| `--out`        | Yes      | —       | Path to save the trained model `.pth` file                   |
-| `--epochs`     | No       | `100`   | Number of training epochs                                    |
-| `--lr`         | No       | `0.001` | Learning rate                                                |
-| `--batch_size` | No       | `256`   | Mini-batch size                                              |
-| `--split_prop` | No       | `0.1`   | Fraction of data held out for validation                     |
-| `--dropout`    | No       | `0.5`   | Dropout rate on fully connected layers                       |
-| `--seed`       | No       | `1`     | Random seed                                                  |
-| `--patience`       | No       | `10`    | Early stopping patience in epochs                                                                          |
-| `--class_weights`  | No       | off     | Weight cross entropy loss by inverse class frequency to counter class imbalance                            |
-| `--onset_weights`  | No       | off     | Use per-sample onset weights from the dataset during training                                             |
+| Argument          | Required | Default | Description                                                                     |
+| ----------------- | -------- | ------- | ------------------------------------------------------------------------------- |
+| `--data_dir`      | Yes      | —       | Directory containing `batch_*.npz` files and `metadata.json`                    |
+| `--out`           | Yes      | —       | Path to save the trained model `.pth` file                                      |
+| `--epochs`        | No       | `100`   | Number of training epochs                                                       |
+| `--lr`            | No       | `0.001` | Learning rate                                                                   |
+| `--batch_size`    | No       | `256`   | Mini-batch size                                                                 |
+| `--split_prop`    | No       | `0.1`   | Fraction of data held out for validation                                        |
+| `--dropout`       | No       | `0.5`   | Dropout rate on fully connected layers                                          |
+| `--seed`          | No       | `1`     | Random seed                                                                     |
+| `--patience`      | No       | `10`    | Early stopping patience in epochs                                               |
+| `--class_weights` | No       | off     | Weight cross entropy loss by inverse class frequency to counter class imbalance |
+| `--onset_weights` | No       | off     | Use per-sample onset weights from the dataset during training                   |
 
 ---
 

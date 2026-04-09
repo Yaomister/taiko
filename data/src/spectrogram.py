@@ -9,7 +9,7 @@ Usage:
     --out_path data/preprocessed/train_data \\
     --note_types "Don,Ka" \\
     --batch_size 50 \\
-    --negative_ratio 1.0 \\
+    --negative_percentage 0.5 \\
     --seed 0
 
 Arguments:
@@ -29,9 +29,9 @@ Arguments:
     --batch_size (int): Number of songs per batch before saving.
     Default: 50
     
-    --negative_ratio (float): Target ratio of negative to positive samples per song.
+    --negative_percentage (float): Fraction of total samples that are background (0.33 = 33%).
     Use -1 to include all negative samples.
-    Default: 1.0
+    Default: 0.5
     
     --seed (int): Random seed for reproducibility.
     Default: 0
@@ -211,7 +211,7 @@ def preprocess_dataset(
         "class_counts": {
             ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()
         },
-        "negative_ratio": cfg.negative_ratio,
+        "negative_percentage": cfg.negative_percentage,
         "hard_negative_radius": cfg.hard_negative_radius,
         "onset_weight_radius": cfg.onset_weight_radius,
         "seed": cfg.seed,
@@ -238,10 +238,10 @@ def parse_args() -> argparse.Namespace:
         help="Difficulty level of songs in this dataset.",
     )
     parser.add_argument(
-        "--negative_ratio",
+        "--negative_percentage",
         type=float,
-        default=1.0,
-        help="Target negatives per positive (~1:1). Use -1 for all negatives.",
+        default=0.5,
+        help="Fraction of total samples that are background (0.33 = 33%%). Use -1 for all negatives.",
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=50)
@@ -292,16 +292,16 @@ def main() -> None:
         allowed_types = [NoteType.Don, NoteType.Ka]
 
     neg_ratio: Optional[float]
-    if args.negative_ratio < 0:
+    if args.negative_percentage < 0:
         neg_ratio = None
     else:
-        neg_ratio = args.negative_ratio
+        neg_ratio = args.negative_percentage
 
     hard_neg_radius: Optional[int] = (
         None if args.hard_negative_radius < 0 else args.hard_negative_radius
     )
     cfg = OnsetPipelineConfig(
-        negative_ratio=neg_ratio,
+        negative_percentage=neg_ratio,
         seed=args.seed,
         hard_negative_radius=hard_neg_radius,
         onset_weight_radius=args.onset_weight_radius,
