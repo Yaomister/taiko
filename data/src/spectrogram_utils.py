@@ -279,34 +279,6 @@ def build_multiclass_labels(
     return labels
 
 
-def milden(labels: np.ndarray, radius: int = 3) -> np.ndarray:
-    """
-    Convert hard integer labels to soft float targets with Gaussian falloff.
-
-    Onset frames (labels != 0) get 1.0; neighboring frames within `radius` frames
-    receive exp(-0.5 * (d / sigma)^2) where sigma = radius / sqrt(2 * ln(10)),
-    giving a weight of ~0.1 at the boundary (d == radius).
-    np.maximum preserves the higher value so overlapping halos don't clobber each other.
-
-    Default radius=3 gives approximately: ±1 → 0.77, ±2 → 0.36, ±3 → 0.10.
-    This covers typical annotation jitter (±10–20 ms) and the natural 2–3 frame
-    spread of attack transients at 512/44100 ≈ 11.6 ms per frame.
-    """
-    soft = (labels != 0).astype(np.float32)
-    if radius <= 0:
-        return soft
-    sigma = radius / np.sqrt(2.0 * np.log(10.0))
-    d_arr = np.arange(1, radius + 1, dtype=np.float32)
-    weights = np.exp(-0.5 * (d_arr / sigma) ** 2)
-    for f in np.where(labels != 0)[0]:
-        for d, w in zip(range(1, radius + 1), weights):
-            if f - d >= 0:
-                np.maximum(soft[f - d : f - d + 1], w, out=soft[f - d : f - d + 1])
-            if f + d < len(labels):
-                np.maximum(soft[f + d : f + d + 1], w, out=soft[f + d : f + d + 1])
-    return soft
-
-
 def extract_windows(
     mel_specs: Sequence[np.ndarray],
     labels: np.ndarray,
@@ -316,25 +288,22 @@ def extract_windows(
     max_negatives: Optional[int] = None,
     neg_exclude_mask: Optional[np.ndarray] = None,
     hard_negative_radius: Optional[int] = None,
-    smooth_radius: int = 3,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Build training samples: X (N, 3, 15, 80), y (N,) multi-class.
+    Build training samples: X (N, 3, 15, 80), y (N,) multi-class integer class ids.
 
     For each valid center i in [CONTEXT_HALF, num_frames - CONTEXT_HALF):
       patch_res = mel_spec[i-7:i+8]  (15, 80)
       X = stack along axis 0 -> (3, 15, 80)
-      y = labels[i]
+      y = labels[i]  (hard integer class id; 0 = background)
 
-    Balancing: include every i with y[i]!=0 (any beat class); sample background
-    frames (y==0) to match negative_ratio * num_pos (default 1:1). If
+    Balancing: include every i with labels[i]!=0 (any note class); sample background
+    frames (labels==0) to match negative_ratio * num_pos (default 1:1). If
     negative_ratio is None, keep all background frames.
 
     neg_exclude_mask: boolean array of shape (num_frames,). Frames where this is
     True are never sampled as negatives, even if labels[i]==0. Use this to exclude
     frames that belong to note types not in the requested class set.
-
-    smooth_radius: half-width of Gaussian halo in frames. Set to 0 to use hard labels.
     """
     if len(mel_specs) != 3:
         raise ValueError("mel_specs must contain 3 spectrograms (512, 1024, 2048).")
@@ -353,10 +322,9 @@ def extract_windows(
 
     i_lo = CONTEXT_HALF
     i_hi = n_frames - CONTEXT_HALF
-    y_dtype = np.float32 if smooth_radius > 0 else np.int64
     if i_hi <= i_lo:
         return np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32), np.zeros(
-            (0,), dtype=y_dtype
+            (0,), dtype=np.int64
         )
 
     valid = np.arange(i_lo, i_hi, dtype=np.int64)
@@ -371,7 +339,7 @@ def extract_windows(
 
     if len(pos_idx) == 0:
         return np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32), np.zeros(
-            (0,), dtype=y_dtype
+            (0,), dtype=np.int64
         )
 
     # Prefer negatives within hard_negative_radius frames of any positive (harder cases,
@@ -406,14 +374,13 @@ def extract_windows(
     rng.shuffle(centers)
 
     X = np.empty((len(centers), 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32)
-    y = np.empty((len(centers),), dtype=y_dtype)
-    soft = milden(labels, radius=smooth_radius) if smooth_radius > 0 else None
+    y = np.empty((len(centers),), dtype=np.int64)
 
     for k, i in enumerate(centers):
         i = int(i)
         for r, spec in enumerate(mel_specs):
             X[k, r] = spec[i - CONTEXT_HALF : i + CONTEXT_HALF + 1]
-        y[k] = soft[i] if soft is not None else labels[i]
+        y[k] = labels[i]
 
     return X, y
 
@@ -450,9 +417,6 @@ class OnsetPipelineConfig:
     seed: int = 0
     hard_negative_radius: Optional[int] = (
         60  # frames; ~0.7s at 44100/512 Hz — prefer negatives near note events
-    )
-    smooth_radius: int = (
-        3  # half-width of Gaussian halo in frames (~35 ms at 512/44100); set to 0 to disable
     )
 
 
@@ -502,7 +466,6 @@ def pipeline_from_audio(
         negative_ratio=cfg.negative_ratio,
         neg_exclude_mask=neg_exclude_mask,
         hard_negative_radius=cfg.hard_negative_radius,
-        smooth_radius=cfg.smooth_radius,
     )
 
 

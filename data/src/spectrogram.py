@@ -145,11 +145,8 @@ def preprocess_dataset(
             # print(f"No samples for {base}, skipping.")
             continue
 
-        # Print class distribution. When smoothing is on (smooth_radius > 0), recover hard labels from
-        # the integer class_ids mapping by rounding, so the display shows real note types.
         id_to_name = {v: k for k, v in class_ids.items()}
-        hard_y = np.round(y).astype(np.int64) if y.dtype.kind == "f" else y
-        unique, counts = np.unique(hard_y, return_counts=True)
+        unique, counts = np.unique(y, return_counts=True)
         class_cnts.update(dict(zip(unique.tolist(), counts.tolist())))
         total = sum(class_cnts.values())
         dist = {
@@ -194,7 +191,6 @@ def preprocess_dataset(
         "n_songs": n_songs,
         "batch_size": batch_size,
         "diff": diff,
-        "smooth_radius": cfg.smooth_radius,
         "classes": {str(v): k for k, v in class_ids.items()},
         "class_counts": {
             ID_TO_NOTE_TYPE[int(k)]: int(v) for k, v in class_cnts.items()
@@ -255,16 +251,6 @@ def parse_args() -> argparse.Namespace:
         required=True,
         type=str,
     )
-    parser.add_argument(
-        "--smooth_radius",
-        type=int,
-        default=3,
-        help=(
-            "Half-width (frames) of the Gaussian soft-label halo around each onset. "
-            "Weight at distance d is exp(-0.5*(d/sigma)^2) with sigma=radius/sqrt(2*ln(10)), "
-            "giving ~0.1 at the boundary. Default 3 (~35 ms each side at 44100/512)."
-        ),
-    )
     return parser.parse_args()
 
 
@@ -294,7 +280,6 @@ def main() -> None:
         negative_ratio=neg_ratio,
         seed=args.seed,
         hard_negative_radius=hard_neg_radius,
-        smooth_radius=args.smooth_radius,
     )
     preprocess_dataset(
         audio_dir=args.audio_dir,
