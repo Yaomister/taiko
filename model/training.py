@@ -48,15 +48,23 @@ def train(
     optimizer: torch.optim.Optimizer,
     loss_function: nn.Module,
     device: torch.device,
+    class_weights: torch.Tensor = None,
 ) -> float:
     """Train one epoch, returns average loss."""
     model.train()
     total_loss = 0.0
+    weights = class_weights.to(device) if class_weights is not None else None
     for X_batch, y_batch, w_batch in loader:
-        X_batch, y_batch, w_batch = X_batch.to(device), y_batch.to(device), w_batch.to(device)
+        X_batch, y_batch, w_batch = (
+            X_batch.to(device),
+            y_batch.to(device),
+            w_batch.to(device),
+        )
         optimizer.zero_grad()
         logits = model(X_batch)
-        per_sample_loss = nn.functional.cross_entropy(logits, y_batch.long(), reduction="none")
+        per_sample_loss = nn.functional.cross_entropy(
+            logits, y_batch.long(), weight=weights, reduction="none"
+        )
         loss = (per_sample_loss * w_batch).mean()
         loss.backward()
         optimizer.step()
@@ -135,6 +143,18 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Early stopping patience (epochs without val loss improvement). Default is 10",
     )
+    parser.add_argument(
+        "--class_weights",
+        action="store_true",
+        default=False,
+        help="Weight cross entropy loss by inverse class frequency. Default is off",
+    )
+    parser.add_argument(
+        "--onset_weights",
+        action="store_true",
+        default=False,
+        help="Use per-sample onset weights from the dataset during training. Default is off",
+    )
     return parser.parse_args()
 
 
@@ -161,8 +181,31 @@ def main() -> None:
     print(f"Loaded {n_samples:,} samples from {len(batch_files)} batch files")
     print(f"Train: {val_start:,} samples | Val: {n_samples - val_start:,} samples")
 
+    # Optionally compute inverse-frequency class weights from training split
+    class_weights = None
+    if args.class_weights:
+        class_counts = torch.zeros(n_classes, dtype=torch.float32)
+        samples_seen = 0
+        for path in batch_files:
+            data = np.load(path)
+            y = torch.from_numpy(data["y"].astype(np.int64))
+            n = len(y)
+            train_end = max(0, min(n, val_start - samples_seen))
+            if train_end > 0:
+                for c in range(n_classes):
+                    class_counts[c] += (y[:train_end] == c).sum().item()
+            samples_seen += n
+            del y, data
+        class_weights = class_counts.sum() / (n_classes * class_counts.clamp(min=1))
+        print(
+            "Class weights:",
+            {i: f"{w:.4f}" for i, w in enumerate(class_weights.tolist())},
+        )
+
     model = CNN(in_degree=3, out_degree=n_classes, dropout=args.dropout).to(device)
-    loss_function = nn.CrossEntropyLoss()
+    loss_function = nn.CrossEntropyLoss(
+        weight=class_weights.to(device) if class_weights is not None else None,
+    )
     optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
     train_losses, val_losses = [], []
     best_val_loss = float("inf")
@@ -182,7 +225,7 @@ def main() -> None:
                 n = len(X)
                 w = (
                     torch.from_numpy(data["weights"].astype(np.float32))
-                    if "weights" in data
+                    if "weights" in data and args.onset_weights
                     else torch.ones(n, dtype=torch.float32)
                 )
 
@@ -191,11 +234,17 @@ def main() -> None:
 
                 if batch_train_end > 0:
                     loader = DataLoader(
-                        TensorDataset(X[:batch_train_end], y[:batch_train_end], w[:batch_train_end]),
+                        TensorDataset(
+                            X[:batch_train_end],
+                            y[:batch_train_end],
+                            w[:batch_train_end],
+                        ),
                         batch_size=args.batch_size,
                         shuffle=True,
                     )
-                    batch_loss = train(model, loader, optimizer, loss_function, device)
+                    batch_loss = train(
+                        model, loader, optimizer, loss_function, device, class_weights
+                    )
                     train_loss_sum += batch_loss * batch_train_end
                     train_total += batch_train_end
 

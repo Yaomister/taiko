@@ -109,7 +109,9 @@ python model/training.py \
 | `--split_prop` | No       | `0.1`   | Fraction of data held out for validation                     |
 | `--dropout`    | No       | `0.5`   | Dropout rate on fully connected layers                       |
 | `--seed`       | No       | `1`     | Random seed                                                  |
-| `--patience`   | No       | `10`    | Early stopping patience in epochs                            |
+| `--patience`       | No       | `10`    | Early stopping patience in epochs                                                                          |
+| `--class_weights`  | No       | off     | Weight cross entropy loss by inverse class frequency to counter class imbalance                            |
+| `--onset_weights`  | No       | off     | Use per-sample onset weights from the dataset during training                                             |
 
 ---
 
