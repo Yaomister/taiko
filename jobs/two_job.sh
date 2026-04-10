@@ -10,7 +10,7 @@
 
 
 
-source ~/venv/taiko/bin/activate
+source /home/yao.eric/venv/taiko/bin/activate
 
 
 mkdir -p models
