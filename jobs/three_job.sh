@@ -9,6 +9,10 @@
 #SBATCH --cpus-per-task=4
 
 
+
+source ~/venv/taiko/bin/activate
+
+
 mkdir -p models
 
 
