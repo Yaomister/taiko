@@ -1,7 +1,0 @@
-Using device: cuda
-Loaded 25,362 samples from 4 batch files
-Train: 22,825 samples | Val: 2,537 samples
-
-Early stopping at epoch 14 (no improvement for 10 epochs)
-Model saved to binary/bigka.pth
-Loss plot saved to binary/bigka.png

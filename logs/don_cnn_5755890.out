@@ -1,7 +1,0 @@
-Using device: cuda
-Loaded 643,330 samples from 6 batch files
-Train: 578,997 samples | Val: 64,333 samples
-
-Early stopping at epoch 15 (no improvement for 10 epochs)
-Model saved to binary/don.pth
-Loss plot saved to binary/don.png

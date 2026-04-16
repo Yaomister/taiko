@@ -1,7 +1,0 @@
-Using device: cuda
-Loaded 269,950 samples from 6 batch files
-Train: 242,955 samples | Val: 26,995 samples
-
-Early stopping at epoch 15 (no improvement for 10 epochs)
-Model saved to binary/ka.pth
-Loss plot saved to binary/ka.png
