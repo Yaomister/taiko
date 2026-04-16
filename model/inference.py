@@ -44,7 +44,6 @@ from spectrogram_utils import (
 )
 
 from cnn import CNN
-from mlp import MLP
 
 IN_FEATURES = 3 * 15 * 80  # 3600
 SUBDIVISIONS = 16
