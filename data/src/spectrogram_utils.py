@@ -1,8 +1,14 @@
 """
-Helpers for the rhythm-game frame classification pipeline (multi-class note type + background).
+Helpers for the OSU standard CNN training pipeline.
 
+Converts raw audio + hit object lists into training-ready numpy arrays.
 Frame i is centered on sample i * hop_size (after symmetric zero-padding). Features are
 log(mel_power + eps), not raw linear mel power.
+
+Each training sample is a (3, 15, 80) spectrogram window centred on a single frame, with:
+  y       — hit type class id (0=background, 1=circle, 2=slider, 3=spinner)
+  y_pos   — normalized (x, y) position in [0,1]; (0,0) for background frames
+  weight  — per-sample loss weight (reduced for background frames near a hit onset)
 """
 
 from __future__ import annotations
@@ -39,30 +45,22 @@ N_MELS = 80
 CONTEXT_FRAMES = 15
 CONTEXT_HALF = CONTEXT_FRAMES // 2
 SUPPORTED_AUDIO_TYPES = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
-# Same rule as data/src/labels.ts: parent folder basename, then invalid chars → "_"
+# Used to sanitize folder names into valid JSON filenames (same rule as the old labels.ts)
 _LABEL_JSON_STEM_SANITIZE_RE = re.compile(r'[\\/:"*?<>| ]+')
 
 
 class NoteType(str, Enum):
-    Don = "don"
-    Ka = "ka"
-    BigDon = "bigDon"
-    BigKa = "bigKa"
-    Drumroll = "drumroll"
-    BigDrumroll = "bigDrumroll"
-    Balloon = "balloon"
+    Circle = "circle"
+    Slider = "slider"
+    Spinner = "spinner"
     Background = "background"
 
 
 NOTE_TYPE_TO_ID: Dict[str, int] = {
     NoteType.Background.value: 0,
-    NoteType.Don.value: 1,
-    NoteType.Ka.value: 2,
-    NoteType.BigDon.value: 3,
-    NoteType.BigKa.value: 4,
-    NoteType.Drumroll.value: 5,
-    NoteType.BigDrumroll.value: 6,
-    NoteType.Balloon.value: 7,
+    NoteType.Circle.value: 1,
+    NoteType.Slider.value: 2,
+    NoteType.Spinner.value: 3,
 }
 
 ID_TO_NOTE_TYPE = {v: k for k, v in NOTE_TYPE_TO_ID.items()}
@@ -278,6 +276,26 @@ def build_multiclass_labels(
             labels[fi] = int(class_ids[note_type])
     return labels
 
+def build_position_labels(
+    notes: Sequence[dict],
+    num_frames: int,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+    hop_size: int = HOP_SIZE,
+) -> np.ndarray:
+    positions = np.zeros((int(num_frames), 2), dtype=np.float32)
+    for note in notes:
+        t_ms = _note_time_ms(note)
+        if t_ms is None:
+            continue
+        t_sec = t_ms / 1000.0
+        fi = int(round(t_sec * sample_rate / hop_size))
+        if 0 <= fi < num_frames:
+            positions[fi, 0] = float(note.get("x", 0.0))
+            positions[fi, 1] = float(note.get("y", 0.0))
+    return positions
+    
+
 
 def extract_windows(
     mel_specs: Sequence[np.ndarray],
@@ -289,7 +307,8 @@ def extract_windows(
     neg_exclude_mask: Optional[np.ndarray] = None,
     hard_negative_radius: Optional[int] = None,
     onset_weight_radius: int = 0,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    y_pos: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Build training samples: X (N, 3, 15, 80), y (N,) multi-class integer class ids,
     weights (N,) float32 per-sample loss weights.
@@ -333,6 +352,7 @@ def extract_windows(
             np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32),
             np.zeros((0,), dtype=np.int64),
             np.ones((0,), dtype=np.float32),
+            np.zeros((0, 2), dtype=np.float32),
         )
 
     valid = np.arange(i_lo, i_hi, dtype=np.int64)
@@ -350,6 +370,7 @@ def extract_windows(
             np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32),
             np.zeros((0,), dtype=np.int64),
             np.ones((0,), dtype=np.float32),
+            np.zeros((0, 2), dtype=np.float32),
         )
 
     # Prefer negatives within hard_negative_radius frames of any positive (harder cases,
@@ -412,7 +433,9 @@ def extract_windows(
     else:
         weights = np.ones(len(centers), dtype=np.float32)
 
-    return X, y, weights
+    y_pos_out = y_pos[centers] if y_pos is not None else np.zeros((len(centers), 2), dtype=np.float32)
+    return X, y, weights, y_pos_out
+
 
 
 def notes_json_to_onset_times_sec(
@@ -459,10 +482,10 @@ def pipeline_from_audio(
     class_ids: Dict[str, int],
     cfg: Optional[OnsetPipelineConfig] = None,
     rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Full pipeline: converts audio + note JSON labels to X (N, 3, 15, 80), y (N,),
-    weights (N,) float32 per-sample loss weights.
+    Full pipeline: converts audio + hit object list to X (N, 3, 15, 80), y (N,),
+    weights (N,) float32 per-sample loss weights, y_pos (N, 2) normalized positions.
     """
     cfg = cfg or OnsetPipelineConfig()
     rng = rng or np.random.default_rng(cfg.seed)
@@ -493,6 +516,12 @@ def pipeline_from_audio(
         hop_size=cfg.hop_size,
     )
     neg_exclude_mask = all_labels != 0
+    y_pos = build_position_labels(
+        notes,
+        nfr,
+        sample_rate=cfg.sample_rate,
+        hop_size=cfg.hop_size,
+    )
     return extract_windows(
         mel_specs,
         labels,
@@ -501,6 +530,7 @@ def pipeline_from_audio(
         neg_exclude_mask=neg_exclude_mask,
         hard_negative_radius=cfg.hard_negative_radius,
         onset_weight_radius=cfg.onset_weight_radius,
+        y_pos=y_pos,
     )
 
 
@@ -516,41 +546,15 @@ def process_song(
     cfg: OnsetPipelineConfig,
     rng: np.random.Generator,
     allowed_types: List[NoteType],
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Process one song -> (X, y, weights) with shapes (N, 3, 15, 80), (N,), (N,)."""
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load audio + JSON labels for one song and run the full pipeline. Returns (X, y, weights, y_pos)."""
     audio = load_audio(audio_path, sample_rate=cfg.sample_rate)
     with open(json_path, "r", encoding="utf-8") as f:
-        notes = json.load(f)
+        notes = json.load(f)["hit_objects"]
 
     # Class-id mapping for the requested beat types
     class_ids = {t.value: NOTE_TYPE_TO_ID[t.value] for t in allowed_types}
     return pipeline_from_audio(audio, notes, class_ids=class_ids, cfg=cfg, rng=rng)
-
-
-def parse_tja_title_wave(path: str) -> Tuple[Optional[str], Optional[str]]:
-    """Read TITLE and WAVE from TJA header (before #START)."""
-    title: Optional[str] = None
-    wave: Optional[str] = None
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                s = line.strip("\r\n")
-                if s.startswith("//"):
-                    continue
-                if s.startswith("#START"):
-                    break
-                if ":" not in s:
-                    continue
-                key, _, val = s.partition(":")
-                key_u = key.strip().upper()
-                val = val.strip()
-                if key_u == "TITLE":
-                    title = val
-                elif key_u == "WAVE":
-                    wave = val
-    except OSError:
-        pass
-    return title, wave
 
 
 def _audio_filenames_in_folder(folder: str) -> List[str]:
@@ -563,17 +567,27 @@ def _audio_filenames_in_folder(folder: str) -> List[str]:
     return names
 
 
-def _tja_paths_in_folder(folder: str) -> List[str]:
-    paths: List[str] = []
+def _osu_audio_filename(folder: str) -> Optional[str]:
+    """Read AudioFilename from the first .osu file found in folder."""
     for name in os.listdir(folder):
-        if name.lower().endswith(".tja"):
-            paths.append(os.path.join(folder, name))
-    paths.sort()
-    return paths
+        if name.lower().endswith(".osu"):
+            path = os.path.join(folder, name)
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("[") and line != "[General]":
+                            break
+                        if line.startswith("AudioFilename"):
+                            _, _, val = line.partition(":")
+                            return val.strip()
+            except OSError:
+                pass
+    return None
 
 
 def label_file(folder: str) -> str:
-    """Finds the label file given a folder name; matches naming convention for labels.ts (uses parent folder name of .tja)."""
+    """Returns the expected JSON label filename stem for a given song folder (invalid chars replaced with _)."""
     folder_basename = os.path.basename(folder)
     return _LABEL_JSON_STEM_SANITIZE_RE.sub("_", folder_basename).strip()
 
@@ -595,17 +609,12 @@ def get_song_folders(audio_root: str) -> List[str]:
 
 
 def get_audio_from_folder(folder: str) -> str:
+    audio_filename = _osu_audio_filename(folder)
+    if audio_filename:
+        path = os.path.join(folder, audio_filename)
+        if os.path.exists(path):
+            return path
     names = _audio_filenames_in_folder(folder)
     if not names:
         raise FileNotFoundError(f"No audio file found in folder {folder}")
-    if len(names) == 1:
-        return os.path.join(folder, names[0])
-    tjas = _tja_paths_in_folder(folder)
-    if len(tjas) == 1:
-        _title, wave = parse_tja_title_wave(tjas[0])
-        if wave:
-            wbase = os.path.basename(wave).lower()
-            for name in names:
-                if name.lower() == wbase:
-                    return os.path.join(folder, name)
     return os.path.join(folder, names[0])
