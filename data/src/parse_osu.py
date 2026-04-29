@@ -9,7 +9,8 @@ def parse_osu(path: str) -> dict:
                 current = line[1:-1]
                 sections[current] = {}
             elif current == "HitObjects":
-                hit_object_lines.append(line)
+                if line:
+                    hit_object_lines.append(line)
             elif current and ":" in line:
                 key, _, value = line.partition(":")
                 sections[current][key.strip()] = value.strip()

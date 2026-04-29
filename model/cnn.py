@@ -5,17 +5,15 @@ from typing import Tuple
 
 class CNN(nn.Module):
     """
-    CNN for taiko beat classification
-    3 convolutional blocks followed by 2 fully connexcted layers
-
-    Args:
-        in_degree: number of input channels (1 for grayscale spectrogram)
-        out_degree: number of output classes (8 for note types)
+    CNN for OSU standard hit object detection and placement.
+    3 convolutional blocks followed by 3 output heads:
+      fc2      — hit detection logits (1,)
+      fc_type  — object type logits: circle/slider/spinner (3,)
+      fc_pos   — predicted (x, y) position normalized to [0, 1] (2,)
 
     Input: (batch, 3, 15, 80)  — 3-channel multi-resolution log-mel spectrogram
-    Output: (batch, out_degree) - unormalized logits over note classes
     """
-    def __init__(self, in_degree: int = 3, out_degree: int = 3, dropout: float = 0.5):
+    def __init__(self, in_degree: int = 3, out_degree: int = 1, dropout: float = 0.5):
         super(CNN, self).__init__()
         # in the onset detection paper they're using rectangular kernels because we care more about changes over time than frequency
         self.conv1 = nn.Conv2d(in_channels=in_degree, out_channels=32, kernel_size=(7, 3))
@@ -35,49 +33,34 @@ class CNN(nn.Module):
             dummy = self.pool3(functional.relu(self.conv3(dummy)))
             flat_size = dummy.flatten(start_dim=1).size(1)
 
-        self.dropout = nn.Dropout(p = dropout)
+        self.dropout = nn.Dropout(p=dropout)
         self.fc1 = nn.Linear(in_features=flat_size, out_features=256)
         self.fc2 = nn.Linear(in_features=256, out_features=out_degree)
-        
+        self.fc_type = nn.Linear(in_features=256, out_features=3)
+        self.fc_pos = nn.Linear(in_features=256, out_features=2)
 
 
-    def forward(self, x) -> torch.Tensor:
-        """
-        Forward pass with relu activation functions and pooling
-
-        Args:
-            x: the input of the dimensions: batch_size, in_degree, 80, 64
-        
-        Returns:
-            unnormalized prediction values with the dimensions of: batch_size, out_degree
-        """
+    def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.pool1(functional.relu(self.conv1(x)))
         x = self.pool2(functional.relu(self.conv2(x)))
         x = self.pool3(functional.relu(self.conv3(x)))
-        # dim 0 is the batch size
-        x = x.flatten(start_dim = 1)
+        x = x.flatten(start_dim=1)
         x = self.dropout(x)
-        x = functional.relu(self.fc1(x)) 
-        x = self.dropout(x)        
-        x = self.fc2(x)
-        return x
+        x = functional.relu(self.fc1(x))
+        x = self.dropout(x)
 
-    def predict(self, x) -> tuple[torch.tensor, torch.tensor]:
-        """
-        Prediction and normalizes the values (with softmax) in the forward pass
-        
-        Args:
-            x: input tensor of shape (batch_size, 1, 80, 64)
+        logits_hit = self.fc2(x)
+        logits_type = self.fc_type(x)
+        pos = self.fc_pos(x)
 
-        Returns:
-            probs: probability distribution over the note types
-            preds: predicted note for each sample
-        """
-        # Runs inference and applies softmax/normalizes the values in the forward pass
+        return logits_hit, logits_type, pos
+
+    def predict(self, x) -> tuple:
         self.eval()
         with torch.no_grad():
-            logits = self.forward(x)
-            probs = torch.softmax(logits, dim=1)
-            preds = probs.argmax(dim=1)
-        return probs, preds
-    
+            logits_hit, logits_type, pos = self.forward(x)
+            probs_hit = torch.sigmoid(logits_hit)
+            probs_type = torch.softmax(logits_type, dim=1)
+            preds_hit = (probs_hit > 0.5).long()
+            preds_type = probs_type.argmax(dim=1)
+        return probs_hit, probs_type, pos, preds_hit, preds_type
