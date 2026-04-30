@@ -59,13 +59,15 @@ def train(
     total_pos_loss = 0.0
     # class_weights covers [background, circle, slider, spinner]; CE uses [circle, slider, spinner]
     weights = class_weights[1:].to(device) if class_weights is not None else None
-    for X_batch, y_batch, y_pos_batch, w_batch in loader:
+    for X_batch, y_batch, y_pos_batch, w_batch, y_curve_type_batch, y_curve_cp_batch in loader:
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
         y_pos_batch = y_pos_batch.to(device)
         w_batch = w_batch.to(device)
+        y_curve_type_batch = y_curve_type_batch.to(device)
+        y_curve_cp_batch = y_curve_cp_batch.to(device)
         optimizer.zero_grad()
-        logits_hit, logits_type, pos = model(X_batch)
+        logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions = model(X_batch)
         y_hit = (y_batch != 0).float()
         hit_sample_loss = nn.functional.binary_cross_entropy_with_logits(
             logits_hit.squeeze(-1), y_hit, reduction="none"
@@ -84,6 +86,16 @@ def train(
             pos_sample_loss = nn.functional.mse_loss(pos[hit_mask], y_pos_batch[hit_mask], reduction="none")
             loss += pos_sample_loss.sum(dim=1).mean()
             total_pos_loss += pos_sample_loss.sum().item()
+
+        slider_mask = (y_batch == 2).bool()
+        if slider_mask.any():
+            curve_type_sample_loss = nn.functional.cross_entropy(
+                logits_curve_type[slider_mask], y_curve_type_batch[slider_mask].long()
+            )
+            curve_dir_loss = nn.functional.mse_loss(
+                logits_curve_directions[slider_mask], y_curve_cp_batch[slider_mask], reduction="none"
+            )
+            loss += curve_type_sample_loss + curve_dir_loss.mean()
 
         loss.backward()
         optimizer.step()
@@ -106,12 +118,14 @@ def evaluate(
     correct = 0
     total = 0
     with torch.no_grad():
-        for X_batch, y_batch, y_pos_batch, w_batch in loader:
+        for X_batch, y_batch, y_pos_batch, w_batch, y_curve_type_batch, y_curve_cp_batch in loader:
             X_batch = X_batch.to(device)
             y_batch = y_batch.to(device)
             y_pos_batch = y_pos_batch.to(device)
             w_batch = w_batch.to(device)
-            logits_hit, logits_type, pos = model(X_batch)
+            y_curve_type_batch = y_curve_type_batch.to(device)
+            y_curve_cp_batch = y_curve_cp_batch.to(device)
+            logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions = model(X_batch)
             y_hit = (y_batch != 0).float()
             hit_sample_loss = nn.functional.binary_cross_entropy_with_logits(
                 logits_hit.squeeze(-1), y_hit, reduction="none"
@@ -127,6 +141,16 @@ def evaluate(
                     pos[hit_mask], y_pos_batch[hit_mask], reduction="none"
                 )
                 loss += pos_sample_loss.sum(dim=1).mean()
+            slider_mask = (y_batch == 2)
+            if slider_mask.any():
+                curve_type_loss = nn.functional.cross_entropy(
+                    logits_curve_type[slider_mask], y_curve_type_batch[slider_mask]
+                )
+                curve_dir_loss = nn.functional.mse_loss(
+                    logits_curve_directions[slider_mask], y_curve_cp_batch[slider_mask]
+                )
+                loss += curve_type_loss + curve_dir_loss
+
             total_loss += loss.item() * len(X_batch)
             preds_hit = (logits_hit.squeeze(-1) > 0)
             correct += (preds_hit == y_hit.bool()).sum().item()
@@ -264,6 +288,8 @@ def main() -> None:
                 X = torch.from_numpy(data["X"].astype(np.float32))
                 y = torch.from_numpy(data["y"])
                 y_pos = torch.from_numpy(data["y_pos"].astype(np.float32))
+                y_curve_type = torch.from_numpy(data["y_curve_type"].astype(np.int64))
+                y_curve_cp = torch.from_numpy(data["y_curve_cp"].astype(np.float32))
                 n = len(X)
                 w = (
                     torch.from_numpy(data["weights"].astype(np.float32))
@@ -281,6 +307,8 @@ def main() -> None:
                             y[:batch_train_end],
                             y_pos[:batch_train_end],
                             w[:batch_train_end],
+                            y_curve_type[:batch_train_end],
+                            y_curve_cp[:batch_train_end],
                         ),
                         batch_size=args.batch_size,
                         shuffle=True,
@@ -293,7 +321,7 @@ def main() -> None:
 
                 if batch_val_start < n:
                     loader = DataLoader(
-                        TensorDataset(X[batch_val_start:], y[batch_val_start:], y_pos[batch_val_start:], w[batch_val_start:]),
+                        TensorDataset(X[batch_val_start:], y[batch_val_start:], y_pos[batch_val_start:], w[batch_val_start:], y_curve_type[batch_val_start:], y_curve_cp[batch_val_start:]),
                         batch_size=args.batch_size,
                         shuffle=False,
                     )
@@ -303,7 +331,7 @@ def main() -> None:
                     total += bt
 
                 samples_seen += n
-                del X, y, y_pos, w, data
+                del X, y, y_pos, w, y_curve_type, y_curve_cp, data
 
             train_loss = train_loss_sum / train_total
             val_loss = val_loss_sum / total

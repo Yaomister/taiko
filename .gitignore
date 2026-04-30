@@ -21,3 +21,7 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# local notes
+curved_sliders.md
+data/songs/

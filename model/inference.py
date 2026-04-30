@@ -81,32 +81,46 @@ def predict_frames(
         for r, spec in enumerate(mel_specs):
             X[i, r] = spec[frame - CONTEXT_HALF : frame + CONTEXT_HALF + 1]
 
-    all_hit, all_type, all_pos = [], [], []
+    all_hit, all_type, all_pos, all_curve_type, all_curve_cp = [], [], [], [], []
     with torch.no_grad():
         for start in range(0, len(frames), batch_size):
             chunk = torch.from_numpy(X[start : start + batch_size]).to(device)
-            logits_hit, logits_type, pos = model(chunk)
+            logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions = model(chunk)
             all_hit.append(torch.sigmoid(logits_hit.squeeze(-1)).cpu().numpy())
             all_type.append(torch.softmax(logits_type, dim=1).cpu().numpy())
             all_pos.append(pos.clamp(0, 1).cpu().numpy())
+            all_curve_type.append(logits_curve_type.argmax(dim=1).cpu().numpy())
+            all_curve_cp.append(logits_curve_directions.cpu().numpy())
 
     hit_probs = np.concatenate(all_hit, axis=0)
     type_probs = np.concatenate(all_type, axis=0)
     positions = np.concatenate(all_pos, axis=0)
-    return hit_probs, type_probs, positions, frames
+    curve_types = np.concatenate(all_curve_type, axis=0)
+    curve_cps = np.concatenate(all_curve_cp, axis=0)
+    return hit_probs, type_probs, positions, curve_types, curve_cps, frames
 
 
-def postprocess(hit_probs, type_probs, positions, centers, threshold=0.5, min_gap_frames=5):
+def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, centers, threshold=0.5, min_gap_frames=5, seed=42):
     """
     Converts per-frame model outputs into a list of note events.
+
+    Positions use a random walk so consecutive notes are reachable from each other
+    rather than teleporting across the screen.
 
     Returns:
         events: list of dicts sorted by time_ms, each with keys:
                 {time_ms (float), type (str: circle/slider/spinner), x (int), y (int)}
     """
+    rng = np.random.default_rng(seed)
     events = []
     last_kept_idx = -min_gap_frames - 1
     candidate_idxs = np.where(hit_probs > threshold)[0]
+
+    # Start near center of playfield
+    cur_x, cur_y = 256, 192
+    prev_time_ms = 0.0
+    cursor_speed = 0.5  # px/ms — scales jump with time gap, keeps notes reachable
+
     for idx in candidate_idxs:
         if idx - last_kept_idx < min_gap_frames:
             continue
@@ -114,9 +128,19 @@ def postprocess(hit_probs, type_probs, positions, centers, threshold=0.5, min_ga
         time_ms = centers[idx] * HOP_SIZE / SAMPLE_RATE * 1000.0
         type_idx = int(type_probs[idx].argmax())
         type_str = ["circle", "slider", "spinner"][type_idx]
-        x = int(round(positions[idx, 0] * 512))
-        y = int(round(positions[idx, 1] * 384))
-        events.append({"time_ms": time_ms, "type": type_str, "x": x, "y": y})
+
+        # Jump distance proportional to time since last note so cursor can physically reach it
+        dt_ms = time_ms - prev_time_ms
+        max_jump = min(dt_ms * cursor_speed, 200)
+        min_jump = max_jump * 0.3
+        angle = rng.uniform(0, 2 * np.pi)
+        dist = rng.uniform(min_jump, max_jump)
+        cur_x = int(np.clip(cur_x + dist * np.cos(angle), 30, 482))
+        cur_y = int(np.clip(cur_y + dist * np.sin(angle), 30, 354))
+        prev_time_ms = time_ms
+
+        events.append({"time_ms": time_ms, "type": type_str, "x": cur_x, "y": cur_y,
+                        "curve_type": int(curve_types[idx]), "curve_cp": curve_cps[idx]})
     events.sort(key=lambda e: e["time_ms"])
     return events
 
@@ -156,7 +180,21 @@ def write_osu(events, title, audio_filename, diff, out_path):
     ]
     for event in events:
         t = int(round(event["time_ms"]))
-        lines.append(f"{event['x']},{event['y']},{t},{type_bit[event['type']]},0,0:0:0:0:")
+        x, y, typ = event["x"], event["y"], event["type"]
+        if typ == "circle":
+            lines.append(f"{x},{y},{t},1,0,0:0:0:0:")
+        elif typ == "slider":
+            curve_letter = ["L", "B", "P", "C"][event["curve_type"]]
+            cp = event["curve_cp"]
+            cp_x = int(np.clip(x + cp[0] * 512, 0, 512))
+            cp_y = int(np.clip(y + cp[1] * 384, 0, 384))
+            end_x = int(np.clip(x + 80, 0, 512))
+            if curve_letter == "L":
+                lines.append(f"{x},{y},{t},2,0,L|{end_x}:{y},1,80,0|0,0:0|0:0,0:0:0:0:")
+            else:
+                lines.append(f"{x},{y},{t},2,0,{curve_letter}|{cp_x}:{cp_y}|{end_x}:{y},1,80,0|0,0:0|0:0,0:0:0:0:")
+        elif typ == "spinner":
+            lines.append(f"256,192,{t},8,0,{t + 500},0:0:0:0:")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"Wrote {len(events)} note events to {out_path}")
@@ -182,9 +220,9 @@ def main():
     audio = load_audio(args.audio)
 
     print(f"Running inference on {args.audio}...")
-    hit_probs, type_probs, positions, centers = predict_frames(model, audio, device)
+    hit_probs, type_probs, positions, curve_types, curve_cps, centers = predict_frames(model, audio, device)
 
-    events = postprocess(hit_probs, type_probs, positions, centers, args.threshold, args.min_gap_frames)
+    events = postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, centers, args.threshold, args.min_gap_frames)
     print(f"Found {len(events)} note events")
 
     audio_filename = os.path.basename(args.audio)

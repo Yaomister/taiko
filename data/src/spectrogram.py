@@ -64,7 +64,7 @@ import numpy as np
 from collections import Counter
 import psutil
 
-from data.src.spectrogram_utils import (
+from spectrogram_utils import (
     CONTEXT_FRAMES,
     HOP_SIZE,
     ID_TO_NOTE_TYPE,
@@ -85,6 +85,8 @@ def export_and_clear_batch(
     batch_Y: List[np.ndarray],
     batch_W: List[np.ndarray],
     batch_Y_pos: List[np.ndarray],
+    batch_Y_curve_type: List[np.ndarray],
+    batch_Y_curve_cp: List[np.ndarray],
     batch_num: int,
     out_path: str,
 ):
@@ -100,6 +102,10 @@ def export_and_clear_batch(
     batch_W.clear()
     y_pos_all = np.concatenate(batch_Y_pos, axis=0)
     batch_Y_pos.clear()
+    y_curve_type_all = np.concatenate(batch_Y_curve_type, axis=0)
+    batch_Y_curve_type.clear()
+    y_curve_cp_all = np.concatenate(batch_Y_curve_cp, axis=0)
+    batch_Y_curve_cp.clear()
 
     # Export batch to .npz
     file_path = f"{out_path}/batch_{batch_num}"
@@ -109,6 +115,8 @@ def export_and_clear_batch(
         y=y_all,
         weights=w_all,
         y_pos=y_pos_all,
+        y_curve_type=y_curve_type_all,
+        y_curve_cp=y_curve_cp_all,
     )
 
 
@@ -127,10 +135,12 @@ def preprocess_dataset(
         raise RuntimeError(f"No song folders found in {audio_dir}")
 
     # Accumulators for the current batch; flushed to .npz every batch_size songs
-    batch_X: List[np.ndarray] = []      # (N, 3, 15, 80) spectrogram windows
-    batch_Y: List[np.ndarray] = []      # (N,) hit type class ids
-    batch_W: List[np.ndarray] = []      # (N,) per-sample loss weights
-    batch_Y_pos: List[np.ndarray] = []  # (N, 2) normalized (x, y) positions
+    batch_X: List[np.ndarray] = []           # (N, 3, 15, 80) spectrogram windows
+    batch_Y: List[np.ndarray] = []           # (N,) hit type class ids
+    batch_W: List[np.ndarray] = []           # (N,) per-sample loss weights
+    batch_Y_pos: List[np.ndarray] = []       # (N, 2) normalized (x, y) positions
+    batch_Y_curve_type: List[np.ndarray] = [] # (N,) curve type class ids
+    batch_Y_curve_cp: List[np.ndarray] = []   # (N, 2) normalized control point offsets
     batch_n_songs = 0
 
     class_cnts = Counter()  # running count of samples per class across all songs processed so far
@@ -161,7 +171,7 @@ def preprocess_dataset(
             # print(f"Skipping {base}: missing JSON {json_path}")
             continue
 
-        X, y, weights, y_pos = process_song(audio_path, json_path, cfg, rng, allowed_types)
+        X, y, weights, y_pos, y_curve_type, y_curve_cp = process_song(audio_path, json_path, cfg, rng, allowed_types)
         if X.shape[0] == 0:
             # print(f"No samples for {base}, skipping.")
             continue
@@ -180,6 +190,8 @@ def preprocess_dataset(
         batch_Y.append(y)
         batch_W.append(weights)
         batch_Y_pos.append(y_pos)
+        batch_Y_curve_type.append(y_curve_type)
+        batch_Y_curve_cp.append(y_curve_cp)
         batch_n_songs += 1
 
         n_samples += X.shape[0]
@@ -196,6 +208,8 @@ def preprocess_dataset(
                 batch_Y=batch_Y,
                 batch_W=batch_W,
                 batch_Y_pos=batch_Y_pos,
+                batch_Y_curve_type=batch_Y_curve_type,
+                batch_Y_curve_cp=batch_Y_curve_cp,
                 out_path=out_path,
             )
             batch_num += 1

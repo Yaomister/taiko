@@ -29,6 +29,15 @@ def parse_osu(path: str) -> dict:
             obj_type = "circle"
         elif type_bits & 2:
             obj_type = "slider"
+            curve_str = parts[5] if len(parts) > 5 else ""
+            curve_parts = curve_str.split("|")
+            curve_type = curve_parts[0] if curve_parts else "L"
+            cp_dx, cp_dy = 0.0, 0.0
+            if len(curve_parts) > 1:
+                cp = curve_parts[1].split(":")
+                cp_dx = (int(cp[0]) - int(parts[0])) / 512
+                cp_dy = (int(cp[1]) - int(parts[1])) / 384
+            length = float(parts[7]) if len(parts) > 7 else 100.0
         elif type_bits & 8:
             obj_type = "spinner"
         else:

@@ -294,7 +294,31 @@ def build_position_labels(
             positions[fi, 0] = float(note.get("x", 0.0))
             positions[fi, 1] = float(note.get("y", 0.0))
     return positions
-    
+
+
+CURVE_TYPE_TO_ID = {"L": 0, "B": 1, "P": 2, "C": 3}
+
+def build_curve_labels(
+    notes: Sequence[dict],
+    num_frames: int,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+    hop_size: int = HOP_SIZE,
+) -> Tuple[np.ndarray, np.ndarray]:
+    curve_types = np.zeros(int(num_frames), dtype=np.int64)
+    curve_cps = np.zeros((int(num_frames), 2), dtype=np.float32)
+    for note in notes:
+        if note.get("type") != "slider":
+            continue
+        t_ms = _note_time_ms(note)
+        if t_ms is None:
+            continue
+        fi = int(round(t_ms / 1000.0 * sample_rate / hop_size))
+        if 0 <= fi < num_frames:
+            curve_types[fi] = CURVE_TYPE_TO_ID.get(note.get("curve_type", "L"), 0)
+            curve_cps[fi, 0] = float(note.get("cp_dx", 0.0))
+            curve_cps[fi, 1] = float(note.get("cp_dy", 0.0))
+    return curve_types, curve_cps
 
 
 def extract_windows(
@@ -308,7 +332,9 @@ def extract_windows(
     hard_negative_radius: Optional[int] = None,
     onset_weight_radius: int = 0,
     y_pos: Optional[np.ndarray] = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    y_curve_type: Optional[np.ndarray] = None,
+    y_curve_cp: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Build training samples: X (N, 3, 15, 80), y (N,) multi-class integer class ids,
     weights (N,) float32 per-sample loss weights.
@@ -353,6 +379,8 @@ def extract_windows(
             np.zeros((0,), dtype=np.int64),
             np.ones((0,), dtype=np.float32),
             np.zeros((0, 2), dtype=np.float32),
+            np.zeros((0,), dtype=np.int64),
+            np.zeros((0, 2), dtype=np.float32),
         )
 
     valid = np.arange(i_lo, i_hi, dtype=np.int64)
@@ -370,6 +398,8 @@ def extract_windows(
             np.zeros((0, 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32),
             np.zeros((0,), dtype=np.int64),
             np.ones((0,), dtype=np.float32),
+            np.zeros((0, 2), dtype=np.float32),
+            np.zeros((0,), dtype=np.int64),
             np.zeros((0, 2), dtype=np.float32),
         )
 
@@ -434,7 +464,9 @@ def extract_windows(
         weights = np.ones(len(centers), dtype=np.float32)
 
     y_pos_out = y_pos[centers] if y_pos is not None else np.zeros((len(centers), 2), dtype=np.float32)
-    return X, y, weights, y_pos_out
+    y_curve_type_out = y_curve_type[centers] if y_curve_type is not None else np.zeros((len(centers),), dtype=np.int64)
+    y_curve_cp_out = y_curve_cp[centers] if y_curve_cp is not None else np.zeros((len(centers), 2), dtype=np.float32)
+    return X, y, weights, y_pos_out, y_curve_type_out, y_curve_cp_out
 
 
 
@@ -482,10 +514,11 @@ def pipeline_from_audio(
     class_ids: Dict[str, int],
     cfg: Optional[OnsetPipelineConfig] = None,
     rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Full pipeline: converts audio + hit object list to X (N, 3, 15, 80), y (N,),
-    weights (N,) float32 per-sample loss weights, y_pos (N, 2) normalized positions.
+    weights (N,) float32 per-sample loss weights, y_pos (N, 2) normalized positions,
+    y_curve_type (N,) slider curve type ids, y_curve_cp (N, 2) control point offsets.
     """
     cfg = cfg or OnsetPipelineConfig()
     rng = rng or np.random.default_rng(cfg.seed)
@@ -522,6 +555,12 @@ def pipeline_from_audio(
         sample_rate=cfg.sample_rate,
         hop_size=cfg.hop_size,
     )
+    y_curve_type, y_curve_cp = build_curve_labels(
+        notes,
+        nfr,
+        sample_rate=cfg.sample_rate,
+        hop_size=cfg.hop_size,
+    )
     return extract_windows(
         mel_specs,
         labels,
@@ -531,6 +570,8 @@ def pipeline_from_audio(
         hard_negative_radius=cfg.hard_negative_radius,
         onset_weight_radius=cfg.onset_weight_radius,
         y_pos=y_pos,
+        y_curve_type=y_curve_type,
+        y_curve_cp=y_curve_cp,
     )
 
 
@@ -546,8 +587,8 @@ def process_song(
     cfg: OnsetPipelineConfig,
     rng: np.random.Generator,
     allowed_types: List[NoteType],
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Load audio + JSON labels for one song and run the full pipeline. Returns (X, y, weights, y_pos)."""
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load audio + JSON labels for one song and run the full pipeline. Returns (X, y, weights, y_pos, y_curve_type, y_curve_cp)."""
     audio = load_audio(audio_path, sample_rate=cfg.sample_rate)
     with open(json_path, "r", encoding="utf-8") as f:
         notes = json.load(f)["hit_objects"]
