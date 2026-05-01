@@ -223,6 +223,8 @@ def preprocess_dataset(
             batch_Y=batch_Y,
             batch_W=batch_W,
             batch_Y_pos=batch_Y_pos,
+            batch_Y_curve_type=batch_Y_curve_type,
+            batch_Y_curve_cp=batch_Y_curve_cp,
             out_path=out_path,
         )
 
