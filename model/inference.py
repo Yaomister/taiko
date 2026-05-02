@@ -81,26 +81,28 @@ def predict_frames(
         for r, spec in enumerate(mel_specs):
             X[i, r] = spec[frame - CONTEXT_HALF : frame + CONTEXT_HALF + 1]
 
-    all_hit, all_type, all_pos, all_curve_type, all_curve_cp = [], [], [], [], []
+    all_hit, all_type, all_pos, all_curve_type, all_curve_cp, all_combo = [], [], [], [], [], []
     with torch.no_grad():
         for start in range(0, len(frames), batch_size):
             chunk = torch.from_numpy(X[start : start + batch_size]).to(device)
-            logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions = model(chunk)
+            logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions, logits_combo = model(chunk)
             all_hit.append(torch.sigmoid(logits_hit.squeeze(-1)).cpu().numpy())
             all_type.append(torch.softmax(logits_type, dim=1).cpu().numpy())
             all_pos.append(pos.clamp(0, 1).cpu().numpy())
             all_curve_type.append(logits_curve_type.argmax(dim=1).cpu().numpy())
             all_curve_cp.append(logits_curve_directions.cpu().numpy())
+            all_combo.append(torch.sigmoid(logits_combo.squeeze(-1)).cpu().numpy())
 
     hit_probs = np.concatenate(all_hit, axis=0)
     type_probs = np.concatenate(all_type, axis=0)
     positions = np.concatenate(all_pos, axis=0)
     curve_types = np.concatenate(all_curve_type, axis=0)
     curve_cps = np.concatenate(all_curve_cp, axis=0)
-    return hit_probs, type_probs, positions, curve_types, curve_cps, frames
+    combo_probs = np.concatenate(all_combo, axis=0)
+    return hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, frames
 
 
-def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, centers, threshold=0.5, min_gap_frames=5, seed=42):
+def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, centers, threshold=0.5, min_gap_frames=5, seed=42):
     """
     Converts per-frame model outputs into a list of note events.
 
@@ -140,7 +142,8 @@ def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, center
         prev_time_ms = time_ms
 
         events.append({"time_ms": time_ms, "type": type_str, "x": cur_x, "y": cur_y,
-                        "curve_type": int(curve_types[idx]), "curve_cp": curve_cps[idx]})
+                        "curve_type": int(curve_types[idx]), "curve_cp": curve_cps[idx],
+                        "new_combo": bool(combo_probs[idx] > 0.5)})
     events.sort(key=lambda e: e["time_ms"])
     return events
 
@@ -181,8 +184,9 @@ def write_osu(events, title, audio_filename, diff, out_path):
     for event in events:
         t = int(round(event["time_ms"]))
         x, y, typ = event["x"], event["y"], event["type"]
+        type_val = type_bit[typ] | (4 if event["new_combo"] else 0)
         if typ == "circle":
-            lines.append(f"{x},{y},{t},1,0,0:0:0:0:")
+            lines.append(f"{x},{y},{t},{type_val},0,0:0:0:0:")
         elif typ == "slider":
             curve_letter = ["L", "B", "P", "C"][event["curve_type"]]
             cp = event["curve_cp"]
@@ -190,11 +194,11 @@ def write_osu(events, title, audio_filename, diff, out_path):
             cp_y = int(np.clip(y + cp[1] * 384, 0, 384))
             end_x = int(np.clip(x + 80, 0, 512))
             if curve_letter == "L":
-                lines.append(f"{x},{y},{t},2,0,L|{end_x}:{y},1,80,0|0,0:0|0:0,0:0:0:0:")
+                lines.append(f"{x},{y},{t},{type_val},0,L|{end_x}:{y},1,80,0|0,0:0|0:0,0:0:0:0:")
             else:
-                lines.append(f"{x},{y},{t},2,0,{curve_letter}|{cp_x}:{cp_y}|{end_x}:{y},1,80,0|0,0:0|0:0,0:0:0:0:")
+                lines.append(f"{x},{y},{t},{type_val},0,{curve_letter}|{cp_x}:{cp_y}|{end_x}:{y},1,80,0|0,0:0|0:0,0:0:0:0:")
         elif typ == "spinner":
-            lines.append(f"256,192,{t},8,0,{t + 500},0:0:0:0:")
+            lines.append(f"256,192,{t},{type_val},0,{t + 500},0:0:0:0:")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"Wrote {len(events)} note events to {out_path}")
@@ -220,9 +224,9 @@ def main():
     audio = load_audio(args.audio)
 
     print(f"Running inference on {args.audio}...")
-    hit_probs, type_probs, positions, curve_types, curve_cps, centers = predict_frames(model, audio, device)
+    hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, centers = predict_frames(model, audio, device)
 
-    events = postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, centers, args.threshold, args.min_gap_frames)
+    events = postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, centers, args.threshold, args.min_gap_frames)
     print(f"Found {len(events)} note events")
 
     audio_filename = os.path.basename(args.audio)

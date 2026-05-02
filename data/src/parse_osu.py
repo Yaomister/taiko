@@ -35,19 +35,27 @@ def parse_osu(path: str) -> dict:
             cp_dx, cp_dy = 0.0, 0.0
             if len(curve_parts) > 1:
                 cp = curve_parts[1].split(":")
-                cp_dx = (int(cp[0]) - int(parts[0])) / 512
-                cp_dy = (int(cp[1]) - int(parts[1])) / 384
+                if len(cp) >= 2:
+                    cp_dx = (int(cp[0]) - int(parts[0])) / 512
+                    cp_dy = (int(cp[1]) - int(parts[1])) / 384
             length = float(parts[7]) if len(parts) > 7 else 100.0
         elif type_bits & 8:
             obj_type = "spinner"
         else:
             continue
-        hit_objects.append({
+        obj = {
             "x": int(parts[0]) / 512,
             "y": int(parts[1]) / 384,
             "time_ms": int(parts[2]),
             "type": obj_type,
-        })
+            "new_combo": bool(type_bits & 4),
+        }
+        if obj_type == "slider":
+            obj["curve_type"] = curve_type
+            obj["cp_dx"] = cp_dx
+            obj["cp_dy"] = cp_dy
+            obj["length"] = length
+        hit_objects.append(obj)
 
     return {
         "version": version,
