@@ -6,13 +6,14 @@ from typing import Tuple
 class CNN(nn.Module):
     """
     CNN for OSU standard hit object detection and placement.
-    3 convolutional blocks followed by 6 output heads:
+    3 convolutional blocks followed by 7 output heads:
       fc2                 — hit detection logits (1,)
       fc_type             — object type logits: circle/slider/spinner (3,)
       fc_pos              — predicted (x, y) position normalized to [0, 1] (2,)
       fc_curve_type       — slider curve type logits: L/B/P/C (4,)
       fc_curve_directions — slider control point offset normalized to [-1, 1] (2,)
       fc_combo            — new combo start logit (1,)
+      fc_length           — slider length normalized to [0, 1] by LENGTH_NORM=400 (1,)
 
     Input: (batch, 3, 15, 80)  — 3-channel multi-resolution log-mel spectrogram
     """
@@ -44,9 +45,10 @@ class CNN(nn.Module):
         self.fc_curve_type = nn.Linear(256, 4)   # L / B / P / C
         self.fc_curve_directions = nn.Linear(256, 2)   # normalized control point offset
         self.fc_combo = nn.Linear(256, 1)
+        self.fc_length = nn.Linear(256, 1)
 
 
-    def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.pool1(functional.relu(self.conv1(x)))
         x = self.pool2(functional.relu(self.conv2(x)))
         x = self.pool3(functional.relu(self.conv3(x)))
@@ -61,14 +63,15 @@ class CNN(nn.Module):
         logits_curve_type = self.fc_curve_type(x)
         logits_curve_directions = self.fc_curve_directions(x)
         logits_combo = self.fc_combo(x)
+        logits_length = self.fc_length(x)
         pos = self.fc_pos(x)
 
-        return logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions, logits_combo
+        return logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions, logits_combo, logits_length
 
     def predict(self, x) -> tuple:
         self.eval()
         with torch.no_grad():
-            logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions, logits_combo = self.forward(x)
+            logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions, logits_combo, logits_length = self.forward(x)
             probs_hit = torch.sigmoid(logits_hit)
             probs_type = torch.softmax(logits_type, dim=1)
             preds_hit = (probs_hit > 0.5).long()
