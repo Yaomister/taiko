@@ -108,7 +108,7 @@ def train(
             length_loss = nn.functional.mse_loss(
                 logits_length[slider_mask].squeeze(-1), y_length_batch[slider_mask]
             )
-            loss += curve_type_sample_loss + curve_dir_loss.mean() + length_loss
+            loss += curve_type_sample_loss + curve_dir_loss.mean() * 5.0 + length_loss
 
         loss.backward()
         optimizer.step()
@@ -172,7 +172,7 @@ def evaluate(
                 length_loss = nn.functional.mse_loss(
                     logits_length[slider_mask].squeeze(-1), y_length_batch[slider_mask]
                 )
-                loss += curve_type_loss + curve_dir_loss + length_loss
+                loss += curve_type_loss + curve_dir_loss * 5.0 + length_loss
 
             total_loss += loss.item() * len(X_batch)
             preds_hit = (logits_hit.squeeze(-1) > 0)

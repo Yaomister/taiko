@@ -41,6 +41,7 @@ from spectrogram_utils import (
 )
 
 from cnn import CNN
+from transformer import TransformerRegressor
 
 
 def load_model(path: str, device: torch.device):
@@ -57,6 +58,53 @@ def load_model(path: str, device: torch.device):
     model.eval()
     print(f"Loaded model: {n_classes} classes, dropout={dropout}")
     return model
+
+
+def load_transformer(path: str, device: torch.device):
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    model = TransformerRegressor(input_dim=4, d_model=64, nhead=4, num_layers=4, output_dim=2)
+    if isinstance(ckpt, dict) and "model_state" in ckpt:
+        model.load_state_dict(ckpt["model_state"])
+        epoch = ckpt.get("epoch", "?")
+    else:
+        model.load_state_dict(ckpt)
+        epoch = "?"
+    model.to(device)
+    model.eval()
+    print(f"Loaded transformer from {path} (epoch {epoch})")
+    return model
+
+
+def apply_transformer_positions(events, transformer_model, device):
+    """Replace random-walk x/y in events with transformer-predicted positions."""
+    if not events:
+        return
+    type_map = {"circle": 1, "slider": 2, "spinner": 3}
+
+    def build_and_run(prev_positions):
+        X_seq = []
+        prev_time = 0.0
+        for i, event in enumerate(events):
+            dt = (event["time_ms"] - prev_time) / 1000.0
+            type_id = type_map.get(event["type"], 1)
+            px, py = prev_positions[i]
+            X_seq.append([dt, type_id, px, py])
+            prev_time = event["time_ms"]
+        X = torch.tensor(X_seq, dtype=torch.float32).unsqueeze(0).to(device)
+        with torch.no_grad():
+            pred = transformer_model(X)
+        return pred[0].clamp(0, 1).cpu().numpy()
+
+    # Pass 1: all prev = center
+    positions = build_and_run([(0.5, 0.5)] * len(events))
+
+    # Pass 2: use pass 1 predictions as prev so each note sees where the last one landed
+    pass2_prev = [(0.5, 0.5)] + [(float(positions[i][0]), float(positions[i][1])) for i in range(len(events) - 1)]
+    positions = build_and_run(pass2_prev)
+
+    for event, (nx, ny) in zip(events, positions):
+        event["x"] = int(np.clip(nx * 512, 30, 482))
+        event["y"] = int(np.clip(ny * 384, 30, 354))
 
 
 def predict_frames(
@@ -153,7 +201,7 @@ def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_
     return events
 
 
-def write_osu(events, title, audio_filename, diff, out_path):
+def write_osu(events, title, audio_filename, diff, out_path, seed=42):
     """
     Writes a minimal .osu file from note events.
 
@@ -161,6 +209,7 @@ def write_osu(events, title, audio_filename, diff, out_path):
         x,y,time,type,hitSound,extras
         type bits: 1=circle, 2=slider, 8=spinner, 4=new combo
     """
+    rng = np.random.default_rng(seed)
     type_bit = {"circle": 1, "slider": 2, "spinner": 8}
     lines = [
         "osu file format v14",
@@ -193,16 +242,14 @@ def write_osu(events, title, audio_filename, diff, out_path):
         if typ == "circle":
             lines.append(f"{x},{y},{t},{type_val},0,0:0:0:0:")
         elif typ == "slider":
-            curve_letter = ["L", "B", "B", "B"][event["curve_type"]]
-            cp = event["curve_cp"]
-            cp_x = int(np.clip(x + cp[0] * 100, 0, 512))
-            cp_y = int(np.clip(y + cp[1] * 100, 0, 384))
             length = event["length"]
             end_x = int(np.clip(x + length, 0, 512))
-            if curve_letter == "L":
+            cp_x = int(np.clip((x + end_x) // 2, 0, 512))
+            cp_y = int(np.clip(y + rng.integers(-80, 80), 0, 384))
+            if cp_y == y:
                 lines.append(f"{x},{y},{t},{type_val},0,L|{end_x}:{y},1,{length},0|0,0:0|0:0,0:0:0:0:")
             else:
-                lines.append(f"{x},{y},{t},{type_val},0,{curve_letter}|{cp_x}:{cp_y}|{end_x}:{y},1,{length},0|0,0:0|0:0,0:0:0:0:")
+                lines.append(f"{x},{y},{t},{type_val},0,B|{cp_x}:{cp_y}|{end_x}:{y},1,{length},0|0,0:0|0:0,0:0:0:0:")
         elif typ == "spinner":
             lines.append(f"256,192,{t},{type_val},0,{t + 500},0:0:0:0:")
     with open(out_path, "w", encoding="utf-8") as f:
@@ -219,6 +266,7 @@ def parse_args():
     parser.add_argument("--diff", default="Normal")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--min_gap_frames", type=int, default=5)
+    parser.add_argument("--transformer", default=None, help="Optional path to transformer.pt for position prediction")
     return parser.parse_args()
 
 
@@ -227,6 +275,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = load_model(args.model, device)
+    transformer = load_transformer(args.transformer, device) if args.transformer else None
     audio = load_audio(args.audio)
 
     print(f"Running inference on {args.audio}...")
@@ -234,6 +283,10 @@ def main():
 
     events = postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, centers, args.threshold, args.min_gap_frames)
     print(f"Found {len(events)} note events")
+
+    if transformer is not None:
+        apply_transformer_positions(events, transformer, device)
+        print("Applied transformer positions")
 
     audio_filename = os.path.basename(args.audio)
     write_osu(events, args.title, audio_filename, args.diff, args.out)
