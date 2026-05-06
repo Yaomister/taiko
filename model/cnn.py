@@ -68,6 +68,15 @@ class CNN(nn.Module):
 
         return logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions, logits_combo, logits_length
 
+    def extract_features(self, x) -> torch.Tensor:
+        x = self.pool1(functional.relu(self.conv1(x)))
+        x = self.pool2(functional.relu(self.conv2(x)))
+        x = self.pool3(functional.relu(self.conv3(x)))
+        x = x.flatten(start_dim=1)
+        x = self.dropout(x)
+        x = functional.relu(self.fc1(x))
+        return x
+
     def predict(self, x) -> tuple:
         self.eval()
         with torch.no_grad():

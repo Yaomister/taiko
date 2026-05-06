@@ -18,6 +18,7 @@ Arguments:
     --diff (str): Difficulty name in .osu metadata. Default is "Normal"
     --threshold (float): Minimum hit confidence to place a note (0-1). Default is 0.5
     --min_gap_frames (int): Minimum frames between notes to avoid double triggers. Default is 5
+    --hp (int): HP drain rate 0-10. Lower values are more forgiving. Default is 5
 """
 
 import argparse
@@ -62,7 +63,7 @@ def load_model(path: str, device: torch.device):
 
 def load_transformer(path: str, device: torch.device):
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    model = TransformerRegressor(input_dim=4, d_model=64, nhead=4, num_layers=4, output_dim=2)
+    model = TransformerRegressor(input_dim=260, d_model=64, nhead=4, num_layers=4, output_dim=2)
     if isinstance(ckpt, dict) and "model_state" in ckpt:
         model.load_state_dict(ckpt["model_state"])
         epoch = ckpt.get("epoch", "?")
@@ -75,7 +76,7 @@ def load_transformer(path: str, device: torch.device):
     return model
 
 
-def apply_transformer_positions(events, transformer_model, device):
+def apply_transformer_positions(events, transformer_model, device, cnn_features):
     """Replace random-walk x/y in events with transformer-predicted positions."""
     if not events:
         return
@@ -88,7 +89,9 @@ def apply_transformer_positions(events, transformer_model, device):
             dt = (event["time_ms"] - prev_time) / 1000.0
             type_id = type_map.get(event["type"], 1)
             px, py = prev_positions[i]
-            X_seq.append([dt, type_id, px, py])
+            feat_idx = int(round(event["time_ms"] / 1000.0 * SAMPLE_RATE / HOP_SIZE)) - CONTEXT_HALF
+            feat_idx = max(0, min(len(cnn_features) - 1, feat_idx))
+            X_seq.append([dt, type_id, px, py] + cnn_features[feat_idx].tolist())
             prev_time = event["time_ms"]
         X = torch.tensor(X_seq, dtype=torch.float32).unsqueeze(0).to(device)
         with torch.no_grad():
@@ -102,9 +105,29 @@ def apply_transformer_positions(events, transformer_model, device):
     pass2_prev = [(0.5, 0.5)] + [(float(positions[i][0]), float(positions[i][1])) for i in range(len(events) - 1)]
     positions = build_and_run(pass2_prev)
 
+    min_dist = 60
+    prev_x, prev_y = 256, 192
     for event, (nx, ny) in zip(events, positions):
-        event["x"] = int(np.clip(nx * 512, 30, 482))
-        event["y"] = int(np.clip(ny * 384, 30, 354))
+        nx = float(np.clip((nx - 0.5) * 1.15 + 0.5, 0.0, 1.0))
+        ny = float(np.clip((ny - 0.5) * 1.15 + 0.5, 0.0, 1.0))
+        x = int(np.clip(nx * 512, 30, 482))
+        y = int(np.clip(ny * 384, 30, 354))
+        dx, dy = x - prev_x, y - prev_y
+        dist = np.sqrt(dx * dx + dy * dy)
+        if dist < min_dist and dist > 0:
+            scale = min_dist / dist
+            x = int(np.clip(prev_x + dx * scale, 30, 482))
+            y = int(np.clip(prev_y + dy * scale, 30, 354))
+        event["x"], event["y"] = x, y
+        # store slider direction so write_osu can extend it away from prev note
+        if event["type"] == "slider":
+            angle = np.arctan2(y - prev_y, x - prev_x) if dist > 0 else 0.0
+            event["_approach_angle"] = angle
+            end_x = int(np.clip(x + np.cos(angle) * event["length"], 30, 482))
+            end_y = int(np.clip(y + np.sin(angle) * event["length"], 30, 354))
+            prev_x, prev_y = end_x, end_y
+        else:
+            prev_x, prev_y = x, y
 
 
 def predict_frames(
@@ -129,7 +152,7 @@ def predict_frames(
         for r, spec in enumerate(mel_specs):
             X[i, r] = spec[frame - CONTEXT_HALF : frame + CONTEXT_HALF + 1]
 
-    all_hit, all_type, all_pos, all_curve_type, all_curve_cp, all_combo, all_length = [], [], [], [], [], [], []
+    all_hit, all_type, all_pos, all_curve_type, all_curve_cp, all_combo, all_length, all_feats = [], [], [], [], [], [], [], []
     with torch.no_grad():
         for start in range(0, len(frames), batch_size):
             chunk = torch.from_numpy(X[start : start + batch_size]).to(device)
@@ -141,6 +164,8 @@ def predict_frames(
             all_curve_cp.append(logits_curve_directions.cpu().numpy())
             all_combo.append(torch.sigmoid(logits_combo.squeeze(-1)).cpu().numpy())
             all_length.append(logits_length.squeeze(-1).cpu().numpy())
+            all_feats.append(model.extract_features(chunk).cpu().numpy())
+
 
     hit_probs = np.concatenate(all_hit, axis=0)
     type_probs = np.concatenate(all_type, axis=0)
@@ -149,7 +174,10 @@ def predict_frames(
     curve_cps = np.concatenate(all_curve_cp, axis=0)
     combo_probs = np.concatenate(all_combo, axis=0)
     lengths = np.concatenate(all_length, axis=0)
-    return hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, frames
+    cnn_features = np.concatenate(all_feats, axis=0)
+    return hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, cnn_features, frames
+
+
 
 
 def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, centers, threshold=0.5, min_gap_frames=5, seed=42):
@@ -201,7 +229,7 @@ def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_
     return events
 
 
-def write_osu(events, title, audio_filename, diff, out_path, seed=42):
+def write_osu(events, title, audio_filename, diff, out_path, hp=5, seed=42):
     """
     Writes a minimal .osu file from note events.
 
@@ -223,7 +251,7 @@ def write_osu(events, title, audio_filename, diff, out_path, seed=42):
         f"Version: {diff}",
         "",
         "[Difficulty]",
-        "HPDrainRate:5",
+        f"HPDrainRate:{hp}",
         "CircleSize:4",
         "OverallDifficulty:5",
         "ApproachRate:9",
@@ -243,13 +271,18 @@ def write_osu(events, title, audio_filename, diff, out_path, seed=42):
             lines.append(f"{x},{y},{t},{type_val},0,0:0:0:0:")
         elif typ == "slider":
             length = event["length"]
-            end_x = int(np.clip(x + length, 0, 512))
-            cp_x = int(np.clip((x + end_x) // 2, 0, 512))
-            cp_y = int(np.clip(y + rng.integers(-80, 80), 0, 384))
-            if cp_y == y:
-                lines.append(f"{x},{y},{t},{type_val},0,L|{end_x}:{y},1,{length},0|0,0:0|0:0,0:0:0:0:")
+            angle = event.get("_approach_angle", 0.0)
+            end_x = int(np.clip(x + np.cos(angle) * length, 0, 512))
+            end_y = int(np.clip(y + np.sin(angle) * length, 0, 384))
+            mid_x = (x + end_x) / 2
+            mid_y = (y + end_y) / 2
+            perp_offset = rng.integers(-60, 60)
+            cp_x = int(np.clip(mid_x + (-np.sin(angle)) * perp_offset, 0, 512))
+            cp_y = int(np.clip(mid_y + np.cos(angle) * perp_offset, 0, 384))
+            if abs(perp_offset) < 5:
+                lines.append(f"{x},{y},{t},{type_val},0,L|{end_x}:{end_y},1,{length},0|0,0:0|0:0,0:0:0:0:")
             else:
-                lines.append(f"{x},{y},{t},{type_val},0,B|{cp_x}:{cp_y}|{end_x}:{y},1,{length},0|0,0:0|0:0,0:0:0:0:")
+                lines.append(f"{x},{y},{t},{type_val},0,B|{cp_x}:{cp_y}|{end_x}:{end_y},1,{length},0|0,0:0|0:0,0:0:0:0:")
         elif typ == "spinner":
             lines.append(f"256,192,{t},{type_val},0,{t + 500},0:0:0:0:")
     with open(out_path, "w", encoding="utf-8") as f:
@@ -267,6 +300,7 @@ def parse_args():
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--min_gap_frames", type=int, default=5)
     parser.add_argument("--transformer", default=None, help="Optional path to transformer.pt for position prediction")
+    parser.add_argument("--hp", type=int, default=5, help="HP drain rate 0-10. Default is 5")
     return parser.parse_args()
 
 
@@ -279,17 +313,21 @@ def main():
     audio = load_audio(args.audio)
 
     print(f"Running inference on {args.audio}...")
-    hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, centers = predict_frames(model, audio, device)
+    hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, cnn_features, centers = predict_frames(model, audio, device)
 
     events = postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, centers, args.threshold, args.min_gap_frames)
     print(f"Found {len(events)} note events")
 
     if transformer is not None:
-        apply_transformer_positions(events, transformer, device)
+        apply_transformer_positions(events, transformer, device, cnn_features)
         print("Applied transformer positions")
 
+    xs = [e["x"] for e in events]
+    ys = [e["y"] for e in events]
+    print(f"X range: {min(xs)}–{max(xs)}, Y range: {min(ys)}–{max(ys)}")
+
     audio_filename = os.path.basename(args.audio)
-    write_osu(events, args.title, audio_filename, args.diff, args.out)
+    write_osu(events, args.title, audio_filename, args.diff, args.out, hp=args.hp)
 
 
 if __name__ == "__main__":
