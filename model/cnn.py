@@ -16,6 +16,9 @@ class CNN(nn.Module):
       fc_length           — slider length normalized to [0, 1] by LENGTH_NORM=400 (1,)
 
     Input: (batch, 3, 15, 80)  — 3-channel multi-resolution log-mel spectrogram
+
+    extract_features(x) returns the 256-dim fc1 activation before all output heads,
+    used as audio conditioning input for the TransformerRegressor.
     """
     def __init__(self, in_degree: int = 3, out_degree: int = 1, dropout: float = 0.5):
         super(CNN, self).__init__()

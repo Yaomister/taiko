@@ -8,7 +8,10 @@ Usage:
         --out path/to/output.osu \\
         --title "My Song" \\
         --diff "Insane" \\
-        --threshold 0.5
+        --threshold 0.5 \\
+        --min_gap_frames 5 \\
+        --hp 5 \\
+        --transformer path/to/transformer.pt
 
 Arguments:
     --audio (str): Path to input audio file (required)
@@ -19,6 +22,7 @@ Arguments:
     --threshold (float): Minimum hit confidence to place a note (0-1). Default is 0.5
     --min_gap_frames (int): Minimum frames between notes to avoid double triggers. Default is 5
     --hp (int): HP drain rate 0-10. Lower values are more forgiving. Default is 5
+    --transformer (str): Optional path to transformer.pt for position prediction. Default is None
 """
 
 import argparse
@@ -109,7 +113,7 @@ def apply_transformer_positions(events, transformer_model, device, cnn_features)
     prev_x, prev_y = 256, 192
     for event, (nx, ny) in zip(events, positions):
         nx = float(np.clip((nx - 0.5) * 1.15 + 0.5, 0.0, 1.0))
-        ny = float(np.clip((ny - 0.5) * 1.15 + 0.5, 0.0, 1.0))
+        ny = float(np.clip((ny - 0.45) * 1.15 + 0.45, 0.0, 1.0))
         x = int(np.clip(nx * 512, 30, 482))
         y = int(np.clip(ny * 384, 30, 354))
         dx, dy = x - prev_x, y - prev_y
@@ -140,10 +144,15 @@ def predict_frames(
     Runs the model on every valid frame of the audio.
 
     Returns:
-        hit_probs:  (N,)    sigmoid confidence that each frame contains a note
-        type_probs: (N, 3)  softmax probabilities over [circle, slider, spinner]
-        positions:  (N, 2)  predicted normalized (x, y) position for each frame
-        frames:     list of frame indices corresponding to each row above
+        hit_probs:   (N,)    sigmoid confidence that each frame contains a note
+        type_probs:  (N, 3)  softmax probabilities over [circle, slider, spinner]
+        positions:   (N, 2)  predicted normalized (x, y) position for each frame
+        curve_types: (N,)    argmax slider curve type index (L/B/P/C)
+        curve_cps:   (N, 2)  predicted slider control point offsets
+        combo_probs: (N,)    sigmoid probability of new combo at each frame
+        lengths:     (N,)    predicted slider length (raw model output, scale by 400)
+        cnn_features:(N, 256) CNN fc1 feature vectors for transformer input
+        frames:      list of frame indices corresponding to each row above
     """
     mel_specs, n_frames = compute_multi_resolution_mel(audio)
     frames = list(range(CONTEXT_HALF, n_frames - CONTEXT_HALF))
@@ -184,12 +193,12 @@ def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_
     """
     Converts per-frame model outputs into a list of note events.
 
-    Positions use a random walk so consecutive notes are reachable from each other
-    rather than teleporting across the screen.
+    Keeps only frames above threshold with at least min_gap_frames between them.
+    Initial x/y positions use a random walk — replaced by the transformer if one is provided.
 
     Returns:
         events: list of dicts sorted by time_ms, each with keys:
-                {time_ms (float), type (str: circle/slider/spinner), x (int), y (int)}
+                {time_ms, type, x, y, curve_type, curve_cp, new_combo, length}
     """
     rng = np.random.default_rng(seed)
     events = []
