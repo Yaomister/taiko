@@ -1,28 +1,26 @@
 """
-Runs the trained OSU standard CNN on an audio file and writes a .osu beatmap.
-
+Runsthe trained Taiko CNN or MLP on an audio file and writes a .tja chart.
+ 
 Usage:
     python inference.py \\
         --audio path/to/song.mp3 \\
-        --model path/to/model.pt \\
-        --out path/to/output.osu \\
+        --bpm 140 \\
+        --model path/to/model.pth \\
+        --out path/to/output.tja \\
         --title "My Song" \\
-        --diff "Insane" \\
-        --threshold 0.5 \\
-        --min_gap_frames 5 \\
-        --hp 5 \\
-        --transformer path/to/transformer.pt
-
+        --offset 0.0 \\
+        --threshold 0.5
+ 
 Arguments:
     --audio (str): Path to input audio file (required)
-    --model (str): Path to trained model checkpoint .pt file (required)
-    --out (str): Path to write output .osu file (required)
-    --title (str): Song title in .osu metadata. Default is "Untitled"
-    --diff (str): Difficulty name in .osu metadata. Default is "Normal"
-    --threshold (float): Minimum hit confidence to place a note (0-1). Default is 0.5
-    --min_gap_frames (int): Minimum frames between notes to avoid double triggers. Default is 5
-    --hp (int): HP drain rate 0-10. Lower values are more forgiving. Default is 5
-    --transformer (str): Optional path to transformer.pt for position prediction. Default is None
+    --bpm (float): BPM of the song (required). Songs with beats per minute changes will produce inaccurate charts.
+    --model (str): Path to trained model checkpoint .pth file (required)
+    --out (str): Path to write output .tja file (required)
+    --title (str): Song title in TJA header. Default is "Untitled"
+    --offset (float): Seconds of silence before music starts. Default is 0.0
+    --threshold (float): Minimum confidence to count as a note (0-1). Default is 0.5
+                         Higher = fewer notes, fewer false positives.
+                         Lower  = more notes, more false positives.
 """
 
 import argparse
@@ -46,297 +44,236 @@ from spectrogram_utils import (
 )
 
 from cnn import CNN
-from transformer import TransformerRegressor
+
+IN_FEATURES = 3 * 15 * 80  # 3600
+SUBDIVISIONS = 16
+BEATS_PER_MEASURE = 4
+TJA_SINGLE = {1: "1", 2: "2", 3: "3", 4: "4"}
+TJA_SPAN_START = {5: "7", 6: "9", 7: "5"}
+TJA_SPAN_END = "8"
 
 
 def load_model(path: str, device: torch.device):
-    """Load a trained model checkpoint and return it in eval mode."""
+    """
+    Loads a trained model.
+
+    Args:
+        path: path to .pth file
+        device: cpu or cuda
+
+    Returns:
+        model: loaded model in eval mode
+        model_type: 'cnn' or 'mlp'
+    """
     info = torch.load(path, map_location=device, weights_only=False)
     state_dict = info["state_dict"]
     n_classes = info["n_classes"]
     args = info.get("args", {})
     dropout = args.get("dropout", 0.5)
 
-    model = CNN(in_degree=3, out_degree=1, dropout=dropout)
+    if "in_features" in info:
+        model_type = "mlp"
+        in_features = info["in_features"]
+        model = MLP(in_features=in_features, out_degree=n_classes, dropout=dropout)
+    else:
+        model_type = "cnn"
+        model = CNN(in_degree=3, out_degree=n_classes, dropout=dropout)
+
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
-    print(f"Loaded model: {n_classes} classes, dropout={dropout}")
-    return model
-
-
-def load_transformer(path: str, device: torch.device):
-    ckpt = torch.load(path, map_location=device, weights_only=False)
-    model = TransformerRegressor(input_dim=260, d_model=64, nhead=4, num_layers=4, output_dim=2)
-    if isinstance(ckpt, dict) and "model_state" in ckpt:
-        model.load_state_dict(ckpt["model_state"])
-        epoch = ckpt.get("epoch", "?")
-    else:
-        model.load_state_dict(ckpt)
-        epoch = "?"
-    model.to(device)
-    model.eval()
-    print(f"Loaded transformer from {path} (epoch {epoch})")
-    return model
-
-
-def apply_transformer_positions(events, transformer_model, device, cnn_features):
-    """Replace random-walk x/y in events with transformer-predicted positions."""
-    if not events:
-        return
-    type_map = {"circle": 1, "slider": 2, "spinner": 3}
-
-    def build_and_run(prev_positions):
-        X_seq = []
-        prev_time = 0.0
-        for i, event in enumerate(events):
-            dt = (event["time_ms"] - prev_time) / 1000.0
-            type_id = type_map.get(event["type"], 1)
-            px, py = prev_positions[i]
-            feat_idx = int(round(event["time_ms"] / 1000.0 * SAMPLE_RATE / HOP_SIZE)) - CONTEXT_HALF
-            feat_idx = max(0, min(len(cnn_features) - 1, feat_idx))
-            X_seq.append([dt, type_id, px, py] + cnn_features[feat_idx].tolist())
-            prev_time = event["time_ms"]
-        X = torch.tensor(X_seq, dtype=torch.float32).unsqueeze(0).to(device)
-        with torch.no_grad():
-            pred = transformer_model(X)
-        return pred[0].clamp(0, 1).cpu().numpy()
-
-    # Pass 1: all prev = center
-    positions = build_and_run([(0.5, 0.5)] * len(events))
-
-    # Pass 2: use pass 1 predictions as prev so each note sees where the last one landed
-    pass2_prev = [(0.5, 0.5)] + [(float(positions[i][0]), float(positions[i][1])) for i in range(len(events) - 1)]
-    positions = build_and_run(pass2_prev)
-
-    min_dist = 60
-    prev_x, prev_y = 256, 192
-    for event, (nx, ny) in zip(events, positions):
-        nx = float(np.clip((nx - 0.5) * 1.15 + 0.5, 0.0, 1.0))
-        ny = float(np.clip((ny - 0.45) * 1.15 + 0.45, 0.0, 1.0))
-        x = int(np.clip(nx * 512, 30, 482))
-        y = int(np.clip(ny * 384, 30, 354))
-        dx, dy = x - prev_x, y - prev_y
-        dist = np.sqrt(dx * dx + dy * dy)
-        if dist < min_dist and dist > 0:
-            scale = min_dist / dist
-            x = int(np.clip(prev_x + dx * scale, 30, 482))
-            y = int(np.clip(prev_y + dy * scale, 30, 354))
-        event["x"], event["y"] = x, y
-        # store slider direction so write_osu can extend it away from prev note
-        if event["type"] == "slider":
-            angle = np.arctan2(y - prev_y, x - prev_x) if dist > 0 else 0.0
-            event["_approach_angle"] = angle
-            end_x = int(np.clip(x + np.cos(angle) * event["length"], 30, 482))
-            end_y = int(np.clip(y + np.sin(angle) * event["length"], 30, 354))
-            prev_x, prev_y = end_x, end_y
-        else:
-            prev_x, prev_y = x, y
+    print(f"Loaded {model_type} model: {n_classes} classes")
+    return model, model_type
 
 
 def predict_frames(
     model: nn.Module,
+    model_type: str,
     audio: np.ndarray,
     device: torch.device,
     batch_size: int = 64,
 ):
     """
-    Runs the model on every valid frame of the audio.
+    Runs the model on every frame of the audio and returns class probabilities.
+
+    Args:
+        model: loaded model in eval mode
+        model_type: 'cnn' or 'mlp'
+        audio: raw audio samples as numpy array
+        device: cpu or cuda
+        batch_size: number of windows to process at once. Default: 64
 
     Returns:
-        hit_probs:   (N,)    sigmoid confidence that each frame contains a note
-        type_probs:  (N, 3)  softmax probabilities over [circle, slider, spinner]
-        positions:   (N, 2)  predicted normalized (x, y) position for each frame
-        curve_types: (N,)    argmax slider curve type index (L/B/P/C)
-        curve_cps:   (N, 2)  predicted slider control point offsets
-        combo_probs: (N,)    sigmoid probability of new combo at each frame
-        lengths:     (N,)    predicted slider length (raw model output, scale by 400)
-        cnn_features:(N, 256) CNN fc1 feature vectors for transformer input
-        frames:      list of frame indices corresponding to each row above
+        all_probs: probabilities for every frame
+        centers: list of frame indices corresponding to each row in all_probs
     """
+
     mel_specs, n_frames = compute_multi_resolution_mel(audio)
-    frames = list(range(CONTEXT_HALF, n_frames - CONTEXT_HALF))
-    X = np.empty((len(frames), 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32)
-    for i, frame in enumerate(frames):
+    centers = list(range(CONTEXT_HALF, n_frames - CONTEXT_HALF))
+    X = np.empty((len(centers), 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32)
+    for k, i in enumerate(centers):
         for r, spec in enumerate(mel_specs):
-            X[i, r] = spec[frame - CONTEXT_HALF : frame + CONTEXT_HALF + 1]
+            X[k, r] = spec[i - CONTEXT_HALF : i + CONTEXT_HALF + 1]
 
-    all_hit, all_type, all_pos, all_curve_type, all_curve_cp, all_combo, all_length, all_feats = [], [], [], [], [], [], [], []
+    all_probs = []
     with torch.no_grad():
-        for start in range(0, len(frames), batch_size):
+        for start in range(0, len(X), batch_size):
             chunk = torch.from_numpy(X[start : start + batch_size]).to(device)
-            logits_hit, logits_type, pos, logits_curve_type, logits_curve_directions, logits_combo, logits_length = model(chunk)
-            all_hit.append(torch.sigmoid(logits_hit.squeeze(-1)).cpu().numpy())
-            all_type.append(torch.softmax(logits_type, dim=1).cpu().numpy())
-            all_pos.append(pos.clamp(0, 1).cpu().numpy())
-            all_curve_type.append(logits_curve_type.argmax(dim=1).cpu().numpy())
-            all_curve_cp.append(logits_curve_directions.cpu().numpy())
-            all_combo.append(torch.sigmoid(logits_combo.squeeze(-1)).cpu().numpy())
-            all_length.append(logits_length.squeeze(-1).cpu().numpy())
-            all_feats.append(model.extract_features(chunk).cpu().numpy())
+            if model_type == "mlp":
+                chunk = chunk.view(chunk.size(0), 1, -1)
+            logits = model(chunk)
+            probs = torch.softmax(logits, dim=1).cpu().numpy()
+            all_probs.append(probs)
+
+    all_probs = np.concatenate(all_probs, axis=0)
+    return all_probs, centers
 
 
-    hit_probs = np.concatenate(all_hit, axis=0)
-    type_probs = np.concatenate(all_type, axis=0)
-    positions = np.concatenate(all_pos, axis=0)
-    curve_types = np.concatenate(all_curve_type, axis=0)
-    curve_cps = np.concatenate(all_curve_cp, axis=0)
-    combo_probs = np.concatenate(all_combo, axis=0)
-    lengths = np.concatenate(all_length, axis=0)
-    cnn_features = np.concatenate(all_feats, axis=0)
-    return hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, cnn_features, frames
-
-
-
-
-def postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, centers, threshold=0.5, min_gap_frames=5, seed=42):
+def postprocess(probs, frame_indices, threshold=0.5, min_gap_frames=3):
     """
-    Converts per-frame model outputs into a list of note events.
+    Converts per-frame probabilities into a list of note events.
 
-    Keeps only frames above threshold with at least min_gap_frames between them.
-    Initial x/y positions use a random walk — replaced by the transformer if one is provided.
+    Single notes (don, ka, bigDon, bigKa): keeps the first detection in each
+    cluster, enforcing a minimum gap of min_gap_frames between same-class hits.
+
+    Held notes (drumroll, bigDrumroll, balloon): merges consecutive frames of
+    the same class into one event with a start and end time.
+
+    Args:
+        probs: probabilities from predict_frames
+        frame_indices: list of frame indices from predict_frames
+        threshold: minimum confidence to count as a note. Default is 0.5
+        min_gap_frames: minimum frames between detections of the same class. Default is 3
 
     Returns:
-        events: list of dicts sorted by time_ms, each with keys:
-                {time_ms, type, x, y, curve_type, curve_cp, new_combo, length}
+        events: list of dicts sorted by time_ms. Single notes have keys
+                {time_ms, type}. Held notes also have {end_time_ms}.
     """
-    rng = np.random.default_rng(seed)
+    predictions = probs.argmax(axis=1)
+    confidences = probs.max(axis=1)
     events = []
-    last_kept_idx = -min_gap_frames - 1
-    candidate_idxs = np.where(hit_probs > threshold)[0]
+    # Don, Ka, BigDon, BigKa
+    for cls in [1, 2, 3, 4]:
+        mask = (predictions == cls) & (confidences >= threshold)
+        idxs = np.where(mask)[0]
+        filtered = []
+        last = -min_gap_frames - 1
+        for i in idxs:
+            if i - last >= min_gap_frames:
+                filtered.append(i)
+                last = i
+        for i in filtered:
+            frame = frame_indices[i]
+            t_ms = frame * HOP_SIZE / SAMPLE_RATE * 1000.0
+            events.append({"time_ms": t_ms, "type": cls})
 
-    # Start near center of playfield
-    cur_x, cur_y = 256, 192
-    prev_time_ms = 0.0
-    cursor_speed = 0.5  # px/ms — scales jump with time gap, keeps notes reachable
-
-    for idx in candidate_idxs:
-        if idx - last_kept_idx < min_gap_frames:
-            continue
-        last_kept_idx = idx
-        time_ms = centers[idx] * HOP_SIZE / SAMPLE_RATE * 1000.0
-        type_idx = int(type_probs[idx].argmax())
-        type_str = ["circle", "slider", "spinner"][type_idx]
-
-        # Jump distance proportional to time since last note so cursor can physically reach it
-        dt_ms = time_ms - prev_time_ms
-        max_jump = min(dt_ms * cursor_speed, 200)
-        min_jump = max_jump * 0.3
-        angle = rng.uniform(0, 2 * np.pi)
-        dist = rng.uniform(min_jump, max_jump)
-        cur_x = int(np.clip(cur_x + dist * np.cos(angle), 30, 482))
-        cur_y = int(np.clip(cur_y + dist * np.sin(angle), 30, 354))
-        prev_time_ms = time_ms
-
-        events.append({"time_ms": time_ms, "type": type_str, "x": cur_x, "y": cur_y,
-                        "curve_type": int(curve_types[idx]), "curve_cp": curve_cps[idx],
-                        "new_combo": bool(combo_probs[idx] > 0.5),
-                        "length": int(np.clip(lengths[idx] * 400, 20, 400))})
+    # Drumroll, BigDrumroll, Balloon
+    for cls in [5, 6, 7]:
+        in_span = False
+        span_start = None
+        for k, frame in enumerate(frame_indices):
+            if predictions[k] == cls and confidences[k] >= threshold:
+                if not in_span:
+                    in_span = True
+                    span_start = frame
+            else:
+                if in_span:
+                    span_end = frame_indices[k - 1]
+                    t_start = span_start * HOP_SIZE / SAMPLE_RATE * 1000.0
+                    t_end = span_end * HOP_SIZE / SAMPLE_RATE * 1000.0
+                    events.append(
+                        {"time_ms": t_start, "end_time_ms": t_end, "type": cls}
+                    )
+                    in_span = False
+        if in_span:
+            span_end = frame_indices[-1]
+            t_start = span_start * HOP_SIZE / SAMPLE_RATE * 1000.0
+            t_end = span_end * HOP_SIZE / SAMPLE_RATE * 1000.0
+            events.append({"time_ms": t_start, "end_time_ms": t_end, "type": cls})
     events.sort(key=lambda e: e["time_ms"])
-    if events:
-        events[0]["new_combo"] = True
     return events
 
 
-def write_osu(events, title, audio_filename, diff, out_path, hp=5, seed=42):
+def write_tja(events, bpm, title, wave, offset, out_path):
     """
-    Writes a minimal .osu file from note events.
+    Converts note mapping into a .tja chart file.
 
-    .osu HitObject line format:
-        x,y,time,type,hitSound,extras
-        type bits: 1=circle, 2=slider, 8=spinner, 4=new combo
+    Args:
+        events: list of note events from postprocess
+        bpm: song BPM used to compute the subdivision grid
+        title: song title written into the TJA header
+        wave: audio filename written into the TJA header
+        offset: seconds of silence before music starts
+        out_path: path to write the .tja file
     """
-    rng = np.random.default_rng(seed)
-    type_bit = {"circle": 1, "slider": 2, "spinner": 8}
+    ms_per_beat = 60000.0 / bpm
+    ms_per_sub = ms_per_beat / SUBDIVISIONS
+    subs_per_measure = SUBDIVISIONS * BEATS_PER_MEASURE
+
+    grid = {}
+    for ev in events:
+        cls = ev["type"]
+        sub_idx = int(round(ev["time_ms"] / ms_per_sub))
+        if cls in TJA_SINGLE:
+            grid[sub_idx] = TJA_SINGLE[cls]
+        elif cls in TJA_SPAN_START:
+            grid[sub_idx] = TJA_SPAN_START[cls]
+            end_sub = int(round(ev["end_time_ms"] / ms_per_sub))
+            grid[end_sub] = TJA_SPAN_END
+
     lines = [
-        "osu file format v14",
+        f"TITLE:{title}",
+        f"WAVE:{wave}",
+        f"BPM:{bpm:.2f}",
+        f"OFFSET:{offset:.3f}",
         "",
-        "[General]",
-        f"AudioFilename: {audio_filename}",
-        "Mode: 0",
+        "COURSE:Oni",
+        "LEVEL:8",
         "",
-        "[Metadata]",
-        f"Title: {title}",
-        f"Version: {diff}",
-        "",
-        "[Difficulty]",
-        f"HPDrainRate:{hp}",
-        "CircleSize:4",
-        "OverallDifficulty:5",
-        "ApproachRate:9",
-        "SliderMultiplier:1.4",
-        "SliderTickRate:1",
-        "",
-        "[TimingPoints]",
-        "0,500,4,1,0,100,1,0",
-        "",
-        "[HitObjects]",
+        "#START",
     ]
-    for event in events:
-        t = int(round(event["time_ms"]))
-        x, y, typ = event["x"], event["y"], event["type"]
-        type_val = type_bit[typ] | (4 if event["new_combo"] else 0)
-        if typ == "circle":
-            lines.append(f"{x},{y},{t},{type_val},0,0:0:0:0:")
-        elif typ == "slider":
-            length = event["length"]
-            angle = event.get("_approach_angle", 0.0)
-            end_x = int(np.clip(x + np.cos(angle) * length, 0, 512))
-            end_y = int(np.clip(y + np.sin(angle) * length, 0, 384))
-            mid_x = (x + end_x) / 2
-            mid_y = (y + end_y) / 2
-            perp_offset = rng.integers(-60, 60)
-            cp_x = int(np.clip(mid_x + (-np.sin(angle)) * perp_offset, 0, 512))
-            cp_y = int(np.clip(mid_y + np.cos(angle) * perp_offset, 0, 384))
-            if abs(perp_offset) < 5:
-                lines.append(f"{x},{y},{t},{type_val},0,L|{end_x}:{end_y},1,{length},0|0,0:0|0:0,0:0:0:0:")
-            else:
-                lines.append(f"{x},{y},{t},{type_val},0,B|{cp_x}:{cp_y}|{end_x}:{end_y},1,{length},0|0,0:0|0:0,0:0:0:0:")
-        elif typ == "spinner":
-            lines.append(f"256,192,{t},{type_val},0,{t + 500},0:0:0:0:")
+    last_sub = max(grid.keys()) if grid else 0
+    last_measure = last_sub // subs_per_measure
+    for m in range(last_measure + 1):
+        measure_str = ""
+        for s in range(subs_per_measure):
+            sub = m * subs_per_measure + s
+            measure_str += grid.get(sub, "0")
+        lines.append(measure_str + ",")
+    lines.append("#END")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"Wrote {len(events)} note events to {out_path}")
+    print(f"Written to {out_path}")
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--audio", required=True, help="Path to audio file")
-    parser.add_argument("--model", required=True, help="Path to .pt model file")
-    parser.add_argument("--out", required=True, help="Output .osu path")
+    parser.add_argument("--bpm", default=None, type=float, help="BPM of the song. Auto-detected if not provided.")
+    parser.add_argument("--model", required=True, help="Path to .pth model file")
+    parser.add_argument("--out", required=True, help="Output .tja path")
     parser.add_argument("--title", default="Untitled")
-    parser.add_argument("--diff", default="Normal")
+    parser.add_argument("--offset", type=float, default=0.0)
     parser.add_argument("--threshold", type=float, default=0.5)
-    parser.add_argument("--min_gap_frames", type=int, default=5)
-    parser.add_argument("--transformer", default=None, help="Optional path to transformer.pt for position prediction")
-    parser.add_argument("--hp", type=int, default=5, help="HP drain rate 0-10. Default is 5")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = load_model(args.model, device)
-    transformer = load_transformer(args.transformer, device) if args.transformer else None
+    model, model_type = load_model(args.model, device)
     audio = load_audio(args.audio)
-
+    if args.bpm is None:
+        import librosa
+        bpm, _ = librosa.beat.beat_track(y=audio, sr=SAMPLE_RATE)
+        args.bpm = float(bpm.item())
+        print(f"Auto-detected BPM: {args.bpm:.1f}")
     print(f"Running inference on {args.audio}...")
-    hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, cnn_features, centers = predict_frames(model, audio, device)
-
-    events = postprocess(hit_probs, type_probs, positions, curve_types, curve_cps, combo_probs, lengths, centers, args.threshold, args.min_gap_frames)
+    probs, frame_indices = predict_frames(model, model_type, audio, device)
+    events = postprocess(probs, frame_indices, threshold=args.threshold)
     print(f"Found {len(events)} note events")
-
-    if transformer is not None:
-        apply_transformer_positions(events, transformer, device, cnn_features)
-        print("Applied transformer positions")
-
-    xs = [e["x"] for e in events]
-    ys = [e["y"] for e in events]
-    print(f"X range: {min(xs)}–{max(xs)}, Y range: {min(ys)}–{max(ys)}")
-
-    audio_filename = os.path.basename(args.audio)
-    write_osu(events, args.title, audio_filename, args.diff, args.out, hp=args.hp)
+    wave = os.path.basename(args.audio)
+    write_tja(events, args.bpm, args.title, wave, args.offset, args.out)
 
 
 if __name__ == "__main__":
