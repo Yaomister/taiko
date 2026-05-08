@@ -1,7 +1,27 @@
 node_modules/
+.vscode/
+
+# generated data
 data/dst
-data/src/__pycache__
 data/preprocessed
 data/tracks
-.vscode/
-model/__pycache__
+data/labels
+
+# song folders (extracted .osz packs)
+[0-9]*/
+
+# trained models
+trained_model/
+
+# python
+__pycache__/
+*.pyc
+*.pth
+*.pt
+
+# OS
+.DS_Store
+
+# local notes
+curved_sliders.md
+data/songs/
