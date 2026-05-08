@@ -1,17 +1,13 @@
 """
-OSU standard (mode 0) dataset pipeline for CNN training. Reads song folders containing .osu
-files and audio, processes each into spectrogram windows with hit type and position labels,
-and saves batches to out_path/batch_n.npz plus a metadata file out_path/metadata.json.
+Onset detection dataset pipeline for CNN training. Saves batches of a specified size
+to out_path/batch_n.npz, and a metadata file out_path/metadata.json containing information
+about the dataset.
 
-Tensor shapes: X (N, 3, 15, 80), y (N,) hit type class id, y_pos (N, 2) normalized (x, y),
-weights (N,) per-sample loss weights.
+Tensor shapes: X (3, 15, 80), y scalar {0,1}; batch X (N, 3, 15, 80)
 
 Usage:
-    --audio_dir data/tracks \\
-    --json_dir data/labels/insane \\
-    --out_path data/preprocessed/insane \\
-    --note_types "circle,slider,spinner" \\
-    --diff insane \\
+    --out_path data/preprocessed/train_data \\
+    --note_types "Don,Ka" \\
     --batch_size 50 \\
     --negative_percentage 0.5 \\
     --seed 0
@@ -19,37 +15,35 @@ Usage:
 Arguments:
     --audio_dir (str): Path to directory containing song folders with audio files.
     Default: "data/tracks"
-
-    --json_dir (str): Path to directory containing JSON label files produced by parse_osu.py
-    (required). Each JSON file is named after the song folder and contains hit_objects with
-    time_ms, type, x, y fields.
-
+    
+    --json_dir (str): Path to directory containing JSON label files (required).
+    Each JSON file should correspond to an audio file with the same base name.
+    
     --out_path (str): Path to output directory for saving batch files and metadata (required).
     Creates batch_0.npz, batch_1.npz, ... and metadata.json
-
-    --note_types (str): Comma-separated hit object types to include (required).
-    Valid values: circle, slider, spinner
-    Example: "circle,slider,spinner"
-
-    --diff (str): Difficulty tier label (e.g. "insane"). Used only for metadata — filter
-    your .osu files by difficulty before building the dataset, one difficulty per dataset.
-
-    --batch_size (int): Number of songs to accumulate before flushing to disk.
+    
+    --note_types (str): Comma-separated list of onset types to include (required).
+    Valid values: Don, Ka, Shaker
+    Example: "Don,Ka"
+    
+    --batch_size (int): Number of songs per batch before saving.
     Default: 50
-
+    
     --negative_percentage (float): Fraction of total samples that are background (0.33 = 33%).
-    Use -1 to include all background samples.
+    Use -1 to include all negative samples.
     Default: 0.5
-
+    
     --seed (int): Random seed for reproducibility.
     Default: 0
 
-    --hard_negative_radius (int): Prefer background samples within this many frames of a hit.
+    --hard_negative_radius (int): Sample negatives within this many frames of a note event.
     Set to -1 to disable. Default: 60
 
-    --onset_weight_radius (int): Background frames within this many frames of a hit onset get
-    linearly reduced loss weight (weight = dist / radius). Hit frames always get weight 1.0.
+    --onset_weight_radius (int): Background frames within this many frames of a note onset get
+    linearly reduced loss weight (weight = dist / radius). Positive frames always get weight 1.0.
     Set to 0 to disable. Default: 4
+
+    --diff (str): Difficulty level of the songs.
 """
 
 from __future__ import annotations
@@ -64,7 +58,7 @@ import numpy as np
 from collections import Counter
 import psutil
 
-from spectrogram_utils import (
+from data.src.spectrogram_utils import (
     CONTEXT_FRAMES,
     HOP_SIZE,
     ID_TO_NOTE_TYPE,
@@ -84,17 +78,12 @@ def export_and_clear_batch(
     batch_X: List[np.ndarray],
     batch_Y: List[np.ndarray],
     batch_W: List[np.ndarray],
-    batch_Y_pos: List[np.ndarray],
-    batch_Y_curve_type: List[np.ndarray],
-    batch_Y_curve_cp: List[np.ndarray],
-    batch_Y_combo: List[np.ndarray],
-    batch_Y_length: List[np.ndarray],
     batch_num: int,
     out_path: str,
 ):
     """
-    Exports a batch to a given output path. Note that this function clears all batch lists
-    to save memory.
+    Exports a batch to a given output path. Note that this function clears batch_X, batch_Y,
+    and batch_W to save memory.
     """
     X_all = np.concatenate(batch_X, axis=0)
     batch_X.clear()
@@ -102,16 +91,6 @@ def export_and_clear_batch(
     batch_Y.clear()
     w_all = np.concatenate(batch_W, axis=0)
     batch_W.clear()
-    y_pos_all = np.concatenate(batch_Y_pos, axis=0)
-    batch_Y_pos.clear()
-    y_curve_type_all = np.concatenate(batch_Y_curve_type, axis=0)
-    batch_Y_curve_type.clear()
-    y_curve_cp_all = np.concatenate(batch_Y_curve_cp, axis=0)
-    batch_Y_curve_cp.clear()
-    y_combo_all = np.concatenate(batch_Y_combo, axis=0)
-    batch_Y_combo.clear()
-    y_length_all = np.concatenate(batch_Y_length, axis=0)
-    batch_Y_length.clear()
 
     # Export batch to .npz
     file_path = f"{out_path}/batch_{batch_num}"
@@ -120,11 +99,6 @@ def export_and_clear_batch(
         X=X_all,
         y=y_all,
         weights=w_all,
-        y_pos=y_pos_all,
-        y_curve_type=y_curve_type_all,
-        y_curve_cp=y_curve_cp_all,
-        y_combo=y_combo_all,
-        y_length=y_length_all,
     )
 
 
@@ -142,18 +116,16 @@ def preprocess_dataset(
     if not song_folders:
         raise RuntimeError(f"No song folders found in {audio_dir}")
 
-    # Accumulators for the current batch; flushed to .npz every batch_size songs
-    batch_X: List[np.ndarray] = []           # (N, 3, 15, 80) spectrogram windows
-    batch_Y: List[np.ndarray] = []           # (N,) hit type class ids
-    batch_W: List[np.ndarray] = []           # (N,) per-sample loss weights
-    batch_Y_pos: List[np.ndarray] = []       # (N, 2) normalized (x, y) positions
-    batch_Y_curve_type: List[np.ndarray] = [] # (N,) curve type class ids
-    batch_Y_curve_cp: List[np.ndarray] = []   # (N, 2) normalized control point offsets
-    batch_Y_combo: List[np.ndarray] = []      # (N,) new combo start flags
-    batch_Y_length: List[np.ndarray] = []     # (N,) normalized slider lengths
+    # X shape: float32 (N, 3, 15, 80)
+    # N samples, 3
+    batch_X: List[np.ndarray] = []
+    # y shape: int64 (N,), (beat classes)
+    batch_Y: List[np.ndarray] = []
+    # weights shape: float32 (N,), per-sample loss weights
+    batch_W: List[np.ndarray] = []
     batch_n_songs = 0
 
-    class_cnts = Counter()  # running count of samples per class across all songs processed so far
+    class_cnts = Counter()  # Count of appearances per class in the dataset
     class_ids = {
         NoteType.Background.value: 0,
         **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types},
@@ -181,13 +153,7 @@ def preprocess_dataset(
             # print(f"Skipping {base}: missing JSON {json_path}")
             continue
 
-        X, y, weights, y_pos, y_curve_type, y_curve_cp, y_combo, y_length = process_song(
-            audio_path,
-            json_path,
-            cfg,
-            rng,
-            allowed_types,
-        )
+        X, y, weights = process_song(audio_path, json_path, cfg, rng, allowed_types)
         if X.shape[0] == 0:
             # print(f"No samples for {base}, skipping.")
             continue
@@ -205,11 +171,6 @@ def preprocess_dataset(
         batch_X.append(X)
         batch_Y.append(y)
         batch_W.append(weights)
-        batch_Y_pos.append(y_pos)
-        batch_Y_curve_type.append(y_curve_type)
-        batch_Y_curve_cp.append(y_curve_cp)
-        batch_Y_combo.append(y_combo)
-        batch_Y_length.append(y_length)
         batch_n_songs += 1
 
         n_samples += X.shape[0]
@@ -225,11 +186,6 @@ def preprocess_dataset(
                 batch_X=batch_X,
                 batch_Y=batch_Y,
                 batch_W=batch_W,
-                batch_Y_pos=batch_Y_pos,
-                batch_Y_curve_type=batch_Y_curve_type,
-                batch_Y_curve_cp=batch_Y_curve_cp,
-                batch_Y_combo=batch_Y_combo,
-                batch_Y_length=batch_Y_length,
                 out_path=out_path,
             )
             batch_num += 1
@@ -242,11 +198,6 @@ def preprocess_dataset(
             batch_X=batch_X,
             batch_Y=batch_Y,
             batch_W=batch_W,
-            batch_Y_pos=batch_Y_pos,
-            batch_Y_curve_type=batch_Y_curve_type,
-            batch_Y_curve_cp=batch_Y_curve_cp,
-            batch_Y_combo=batch_Y_combo,
-            batch_Y_length=batch_Y_length,
             out_path=out_path,
         )
 
@@ -270,8 +221,7 @@ def preprocess_dataset(
         "n_mels": N_MELS,
         "per_window_context_frames": CONTEXT_FRAMES,
         "X_shape": "(N, 3, 15, 80)",
-        "y_shape": "(N,) hit type at center frame (0=background, 1=circle, 2=slider, 3=spinner)",
-        "y_pos_shape": "(N, 2) normalized (x, y) position; (0,0) for background frames",
+        "y_shape": "(N,) beat label at center frame (0=background)",
     }
     with open(f"{out_path}/metadata.json", "w") as file:
         json.dump(metadata, file)
@@ -279,7 +229,7 @@ def preprocess_dataset(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build OSU standard dataset: X (N,3,15,80), y hit type, y_pos (N,2) position."
+        description="Build onset dataset: X (N,3,15,80), y binary."
     )
     parser.add_argument("--audio_dir", type=str, default="data/tracks")
     parser.add_argument(
@@ -339,7 +289,7 @@ def main() -> None:
                 f"Unknown note type. Valid: {[n.value for n in NoteType]}"
             ) from e
     else:
-        allowed_types = [NoteType.Circle, NoteType.Slider, NoteType.Spinner]
+        allowed_types = [NoteType.Don, NoteType.Ka]
 
     neg_ratio: Optional[float]
     if args.negative_percentage < 0:
