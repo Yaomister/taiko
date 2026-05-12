@@ -1,5 +1,7 @@
 # Taiko
 
+![thumbnail](/thumbnail.png)
+
 A machine learning pipeline that generates playable Taiko no Tatsujin (太鼓の達人) drum charts from audio files. It processes songs into log-mel spectrograms, trains a CNN to detect note onsets, and outputs `.tja` chart files.
 
 ---
