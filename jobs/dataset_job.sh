@@ -6,4 +6,4 @@
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
 
-./data/src/build_dataset.sh -d normal -f ese_balanced -n don,ka,bigDon,bigKa -b 500 -r 0.25
+./data/src/build_dataset.sh --difficulty normal --folder ese_balanced --notes don,ka,bigDon,bigKa --batch-size 500 --ratio 0.25
