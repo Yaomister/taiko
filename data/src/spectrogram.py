@@ -1,49 +1,17 @@
 """
-Onset detection dataset pipeline for CNN training. Saves batches of a specified size
-to out_path/batch_n.npz, and a metadata file out_path/metadata.json containing information
-about the dataset.
+Builds the onset detection training dataset. Reads songs and their JSON note labels, computes
+log-mel spectrogram windows, and writes batches to out_path/batch_n.npz plus a
+out_path/metadata.json describing the dataset.
 
-Tensor shapes: X (3, 15, 80), y scalar {0,1}; batch X (N, 3, 15, 80)
+Tensor shapes: X (N, 3, 15, 80), y (N,) integer class id.
 
 Usage:
-    --out_path data/preprocessed/train_data \\
-    --note_types "Don,Ka" \\
-    --batch_size 50 \\
-    --negative_percentage 0.5 \\
-    --seed 0
+    python data/src/spectrogram.py \\
+        --json_dir data/preprocessed/labels/easy \\
+        --out_path data/preprocessed/exports/my_dataset \\
+        --note_types "Don,Ka"
 
-Arguments:
-    --audio_dir (str): Path to directory containing song folders with audio files.
-    Default: "data/tracks"
-    
-    --json_dir (str): Path to directory containing JSON label files (required).
-    Each JSON file should correspond to an audio file with the same base name.
-    
-    --out_path (str): Path to output directory for saving batch files and metadata (required).
-    Creates batch_0.npz, batch_1.npz, ... and metadata.json
-    
-    --note_types (str): Comma-separated list of onset types to include (required).
-    Valid values: Don, Ka, Shaker
-    Example: "Don,Ka"
-    
-    --batch_size (int): Number of songs per batch before saving.
-    Default: 50
-    
-    --negative_percentage (float): Fraction of total samples that are background (0.33 = 33%).
-    Use -1 to include all negative samples.
-    Default: 0.5
-    
-    --seed (int): Random seed for reproducibility.
-    Default: 0
-
-    --hard_negative_radius (int): Sample negatives within this many frames of a note event.
-    Set to -1 to disable. Default: 60
-
-    --onset_weight_radius (int): Background frames within this many frames of a note onset get
-    linearly reduced loss weight (weight = dist / radius). Positive frames always get weight 1.0.
-    Set to 0 to disable. Default: 4
-
-    --diff (str): Difficulty level of the songs.
+Run with --help for the full argument list.
 """
 
 from __future__ import annotations
@@ -92,7 +60,6 @@ def export_and_clear_batch(
     w_all = np.concatenate(batch_W, axis=0)
     batch_W.clear()
 
-    # Export batch to .npz
     file_path = f"{out_path}/batch_{batch_num}"
     np.savez_compressed(
         file=file_path,
@@ -116,16 +83,12 @@ def preprocess_dataset(
     if not song_folders:
         raise RuntimeError(f"No song folders found in {audio_dir}")
 
-    # X shape: float32 (N, 3, 15, 80)
-    # N samples, 3
-    batch_X: List[np.ndarray] = []
-    # y shape: int64 (N,), (beat classes)
-    batch_Y: List[np.ndarray] = []
-    # weights shape: float32 (N,), per-sample loss weights
-    batch_W: List[np.ndarray] = []
+    batch_X: List[np.ndarray] = []  # float32 (N, 3, 15, 80)
+    batch_Y: List[np.ndarray] = []  # int64 (N,) class ids
+    batch_W: List[np.ndarray] = []  # float32 (N,) per-sample loss weights
     batch_n_songs = 0
 
-    class_cnts = Counter()  # Count of appearances per class in the dataset
+    class_cnts = Counter()
     class_ids = {
         NoteType.Background.value: 0,
         **{t.value: NOTE_TYPE_TO_ID[t] for t in allowed_types},
@@ -133,7 +96,6 @@ def preprocess_dataset(
     n_samples, n_songs = 0, 0
     batch_num = 0
 
-    # Make output directory if it doesn't exist
     os.makedirs(out_path, exist_ok=True)
 
     pbar = tqdm(song_folders)
@@ -145,17 +107,14 @@ def preprocess_dataset(
 
         try:
             audio_path = get_audio_from_folder(folder)
-        except FileNotFoundError as e:
-            # print(f"Skipping {base}: {e}")
+        except FileNotFoundError:
             continue
         json_path = os.path.join(json_dir, f"{base}.json")
         if not os.path.exists(json_path):
-            # print(f"Skipping {base}: missing JSON {json_path}")
             continue
 
         X, y, weights = process_song(audio_path, json_path, cfg, rng, allowed_types)
         if X.shape[0] == 0:
-            # print(f"No samples for {base}, skipping.")
             continue
 
         id_to_name = {v: k for k, v in class_ids.items()}
@@ -201,7 +160,6 @@ def preprocess_dataset(
             out_path=out_path,
         )
 
-    # Save metadata
     metadata = {
         "n_samples": n_samples,
         "n_songs": n_songs,

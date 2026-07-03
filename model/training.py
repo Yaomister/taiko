@@ -1,30 +1,5 @@
 """
-Training script for Taiko CNN note classifier. Loads preprocessed .npz batch files and trains the CNN model.
-
-Usage:
-    python model/training.py \\
-        --data_dir data/preprocessed/exports/my_dataset \\
-        --out models/my_model.pt
-
-Arguments:
-    --data_dir (str): Directory containing batch_0.npz, batch_1.npz, ... and metadata.json (required)
-
-    --out (str): File path to save the trained model weights (required)
-
-    --epochs (int): Number of training epochs. Default is 100
-
-    --lr (float): Learning rate. Default is 0.001
-
-    --batch_size (int): Mini-batch size for training. Default is 256
-
-    --split_prop (float): Proportion of data to use for validation. Default is 0.1
-
-    --seed (int): Random seed. Default is 1
-
-    --dropout (float): Dropout rate on fully connected layers. Default is 0.5
-
-    --patience (int): Early stopping patience in epochs. Default is 10
-
+Trains the Taiko CNN note classifier on preprocessed .npz batch files.
 """
 
 import os
@@ -169,20 +144,18 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Load metadata
     meta_path = os.path.join(args.data_dir, "metadata.json")
     with open(meta_path) as f:
         meta = json.load(f)
     n_classes = len(meta.get("classes", {}))
 
-    # Collect batch files and count samples
     batch_files = sorted(glob.glob(os.path.join(args.data_dir, "batch_*.npz")))
     n_samples = sum(len(np.load(p)["X"]) for p in batch_files)
     val_start = int(n_samples * (1 - args.split_prop))
     print(f"Loaded {n_samples:,} samples from {len(batch_files)} batch files")
     print(f"Train: {val_start:,} samples | Val: {n_samples - val_start:,} samples")
 
-    # Optionally compute inverse-frequency class weights from training split
+    # Inverse-frequency class weights computed from the training split only
     class_weights = None
     if args.class_weights:
         class_counts = torch.zeros(n_classes, dtype=torch.float32)
@@ -294,7 +267,6 @@ def main() -> None:
 
     model.load_state_dict(best_state_dict)
 
-    # Save model
     torch.save(
         {
             "state_dict": model.state_dict(),
@@ -305,7 +277,6 @@ def main() -> None:
     )
     print(f"Model saved to {args.out}")
 
-    # Save loss plot
     model_name = os.path.splitext(args.out)[0]
     plot_path = model_name + ".png"
     plot_losses(train_losses, val_losses, plot_path)

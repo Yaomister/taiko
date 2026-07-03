@@ -1,7 +1,5 @@
 # Taiko
 
-![thumbnail](/thumbnail.png)
-
 A machine learning pipeline that generates playable Taiko no Tatsujin (太鼓の達人) drum charts from audio files. It processes songs into log-mel spectrograms, trains a CNN to detect note onsets, and outputs `.tja` chart files.
 
 ---
@@ -41,7 +39,7 @@ The pipeline runs in three stages:
 2. **Spectrogram processing** — builds 3 log-mel spectrograms per frame across 3 window sizes, assigns frame labels, and extracts windowed segments
 3. **Dataset export** — writes batched `.npz` files to `data/preprocessed/exports/<my_dataset>`
 
-For a more detailed explanation, see the [pipeline documentation](https://docs.google.com/document/d/1nBxzO4Q0O5qYJpeCSY0WN7S8GYsNMCFrZRxRqKWj9QM/edit?tab=t.0) (WIP).
+For a more detailed explanation, see the [pipeline documentation](https://docs.google.com/document/d/1nBxzO4Q0O5qYJpeCSY0WN7S8GYsNMCFrZRxRqKWj9QM/edit?tab=t.0).
 
 ---
 
@@ -132,7 +130,7 @@ python model/inference.py \
 | Argument      | Required | Default      | Description                                                                                                         |
 | ------------- | -------- | ------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `--audio`     | ✅       | —            | Path to input audio file                                                                                            |
-| `--bpm`       | ✅       | —            | Song BPM (mid-song BPM changes will produce inaccurate charts)                                                      |
+| `--bpm`       |          | auto-detect  | Song BPM (mid-song BPM changes will produce inaccurate charts); auto-detected via librosa if omitted                |
 | `--model`     | ✅       | —            | Path to trained `.pth` model file                                                                                   |
 | `--out`       | ✅       | —            | Path to write output `.tja` file                                                                                    |
 | `--title`     |          | `"Untitled"` | Song title written into the TJA header                                                                              |

@@ -124,7 +124,7 @@ def _compute_mel_spectrogram_nfr(
     padded_audio: np.ndarray,
     center_offset: int,
     window_size: int,
-    nfr: int,  # Number of frames
+    nfr: int,  # number of frames
     sample_rate: int,
     hop_size: int,
     n_mels: int,
@@ -133,7 +133,7 @@ def _compute_mel_spectrogram_nfr(
     Centered STFT-style log-mel: frame i uses samples centered at (center_offset + i * hop).
 
     padded_audio length must be len(original) + 2 * center_offset; caller must ensure
-    nfr (num ber of frames) is consistent with _natural_mel_frames_centered(len(original), hop_size).
+    nfr is consistent with _natural_mel_frames_centered(len(original), hop_size).
     """
     padded_audio = np.asarray(padded_audio, dtype=np.float64).ravel()
     if nfr <= 0:
@@ -466,7 +466,6 @@ def pipeline_from_audio(
     """
     cfg = cfg or OnsetPipelineConfig()
     rng = rng or np.random.default_rng(cfg.seed)
-    # Create 3 mel spectrograms
     mel_specs, nfr = compute_multi_resolution_mel(
         audio,
         sample_rate=cfg.sample_rate,
@@ -522,7 +521,6 @@ def process_song(
     with open(json_path, "r", encoding="utf-8") as f:
         notes = json.load(f)
 
-    # Class-id mapping for the requested beat types
     class_ids = {t.value: NOTE_TYPE_TO_ID[t.value] for t in allowed_types}
     return pipeline_from_audio(audio, notes, class_ids=class_ids, cfg=cfg, rng=rng)
 

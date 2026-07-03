@@ -1,34 +1,15 @@
 """
-Runsthe trained Taiko CNN or MLP on an audio file and writes a .tja chart.
- 
-Usage:
-    python inference.py \\
-        --audio path/to/song.mp3 \\
-        --bpm 140 \\
-        --model path/to/model.pth \\
-        --out path/to/output.tja \\
-        --title "My Song" \\
-        --offset 0.0 \\
-        --threshold 0.5
- 
-Arguments:
-    --audio (str): Path to input audio file (required)
-    --bpm (float): BPM of the song (required). Songs with beats per minute changes will produce inaccurate charts.
-    --model (str): Path to trained model checkpoint .pth file (required)
-    --out (str): Path to write output .tja file (required)
-    --title (str): Song title in TJA header. Default is "Untitled"
-    --offset (float): Seconds of silence before music starts. Default is 0.0
-    --threshold (float): Minimum confidence to count as a note (0-1). Default is 0.5
-                         Higher = fewer notes, fewer false positives.
-                         Lower  = more notes, more false positives.
+Runs the trained Taiko CNN on an audio file and writes a .tja chart.
+
+See README.md for argument descriptions, or run with --help.
 """
 
-import argparse
 import os
 import sys
-
-import numpy as np
 import torch
+import argparse
+import numpy as np
+from cnn import CNN
 import torch.nn as nn
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data", "src"))
@@ -43,8 +24,6 @@ from spectrogram_utils import (
     CONTEXT_HALF,
 )
 
-from cnn import CNN
-
 IN_FEATURES = 3 * 15 * 80  # 3600
 SUBDIVISIONS = 16
 BEATS_PER_MEASURE = 4
@@ -52,43 +31,23 @@ TJA_SINGLE = {1: "1", 2: "2", 3: "3", 4: "4"}
 TJA_SPAN_START = {5: "7", 6: "9", 7: "5"}
 TJA_SPAN_END = "8"
 
-
-def load_model(path: str, device: torch.device):
-    """
-    Loads a trained model.
-
-    Args:
-        path: path to .pth file
-        device: cpu or cuda
-
-    Returns:
-        model: loaded model in eval mode
-        model_type: 'cnn' or 'mlp'
-    """
+def load_model(path: str, device: torch.device) -> CNN:
+    """Loads a trained CNN checkpoint in eval mode."""
     info = torch.load(path, map_location=device, weights_only=False)
     state_dict = info["state_dict"]
     n_classes = info["n_classes"]
-    args = info.get("args", {})
-    dropout = args.get("dropout", 0.5)
+    dropout = info.get("args", {}).get("dropout", 0.5)
 
-    if "in_features" in info:
-        model_type = "mlp"
-        in_features = info["in_features"]
-        model = MLP(in_features=in_features, out_degree=n_classes, dropout=dropout)
-    else:
-        model_type = "cnn"
-        model = CNN(in_degree=3, out_degree=n_classes, dropout=dropout)
-
+    model = CNN(in_degree=3, out_degree=n_classes, dropout=dropout)
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
-    print(f"Loaded {model_type} model: {n_classes} classes")
-    return model, model_type
+    print(f"Loaded CNN model: {n_classes} classes")
+    return model
 
 
 def predict_frames(
     model: nn.Module,
-    model_type: str,
     audio: np.ndarray,
     device: torch.device,
     batch_size: int = 64,
@@ -98,16 +57,14 @@ def predict_frames(
 
     Args:
         model: loaded model in eval mode
-        model_type: 'cnn' or 'mlp'
         audio: raw audio samples as numpy array
         device: cpu or cuda
-        batch_size: number of windows to process at once. Default: 64
+        batch_size: number of windows to process at once
 
     Returns:
         all_probs: probabilities for every frame
         centers: list of frame indices corresponding to each row in all_probs
     """
-
     mel_specs, n_frames = compute_multi_resolution_mel(audio)
     centers = list(range(CONTEXT_HALF, n_frames - CONTEXT_HALF))
     X = np.empty((len(centers), 3, CONTEXT_FRAMES, N_MELS), dtype=np.float32)
@@ -119,8 +76,6 @@ def predict_frames(
     with torch.no_grad():
         for start in range(0, len(X), batch_size):
             chunk = torch.from_numpy(X[start : start + batch_size]).to(device)
-            if model_type == "mlp":
-                chunk = chunk.view(chunk.size(0), 1, -1)
             logits = model(chunk)
             probs = torch.softmax(logits, dim=1).cpu().numpy()
             all_probs.append(probs)
@@ -142,12 +97,11 @@ def postprocess(probs, frame_indices, threshold=0.5, min_gap_frames=3):
     Args:
         probs: probabilities from predict_frames
         frame_indices: list of frame indices from predict_frames
-        threshold: minimum confidence to count as a note. Default is 0.5
-        min_gap_frames: minimum frames between detections of the same class. Default is 3
+        threshold: minimum confidence to count as a note
+        min_gap_frames: minimum frames between detections of the same class
 
     Returns:
-        events: list of dicts sorted by time_ms. Single notes have keys
-                {time_ms, type}. Held notes also have {end_time_ms}.
+        events: list of dicts sorted by time_ms
     """
     predictions = probs.argmax(axis=1)
     confidences = probs.max(axis=1)
@@ -257,11 +211,10 @@ def parse_args():
     parser.add_argument("--threshold", type=float, default=0.5)
     return parser.parse_args()
 
-
 def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model, model_type = load_model(args.model, device)
+    model = load_model(args.model, device)
     audio = load_audio(args.audio)
     if args.bpm is None:
         import librosa
@@ -269,7 +222,7 @@ def main():
         args.bpm = float(bpm.item())
         print(f"Auto-detected BPM: {args.bpm:.1f}")
     print(f"Running inference on {args.audio}...")
-    probs, frame_indices = predict_frames(model, model_type, audio, device)
+    probs, frame_indices = predict_frames(model, audio, device)
     events = postprocess(probs, frame_indices, threshold=args.threshold)
     print(f"Found {len(events)} note events")
     wave = os.path.basename(args.audio)
